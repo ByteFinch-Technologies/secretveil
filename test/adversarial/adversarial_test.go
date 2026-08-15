@@ -2,10 +2,14 @@
 // secretveil?
 //
 // Every case runs the real binary, in a real project, with the environment of
-// an agent. Two of the six cases record something the product does NOT stop.
+// an agent. Two of the seven cases record something the product does NOT stop.
 // They are here on purpose. A limit that is written in a test cannot be quietly
 // lost in a later change, and a security tool that hides its limits is worse
 // than no tool.
+//
+// Case 7 was added after the other six passed. It found a way out that was
+// cheaper than any of them. Six green cases are not proof that the seventh
+// does not exist.
 package adversarial
 
 import (
@@ -323,6 +327,75 @@ func TestCase6AValueWrittenToAFileIsNotProtected(t *testing.T) {
 			"A child process could no longer write a secret to a file.\n"+
 			"If that is on purpose, rewrite this case and say so in the threat model.\n"+
 			"got %q", stolen)
+	}
+}
+
+// Case 7. The cheapest attack of all, and it worked.
+//
+// restore is the undo of init. It reads every handle, asks the store for the
+// value, and writes the value back into the .env file. Until this case was
+// written, an agent could run one command, "secretveil restore", and then read
+// the file the way it did before the tool was installed. Every other case in
+// this file is harder than that.
+//
+// The lesson is not about restore. It is that every command which can put a
+// value where a file can hold it needs the same gate as "get --reveal". A new
+// command has to answer that question before it ships.
+func TestCase7AnAgentMayNotUndoTheMigration(t *testing.T) {
+	root := project(t)
+	env := filepath.Join(root, ".env")
+	veiled := read(t, env)
+
+	r := sv(t, root, nil, "restore")
+	if r.code == 0 {
+		t.Fatalf("an agent restored the plaintext:\n%s", r.all())
+	}
+	mustNotLeak(t, r, "case 7")
+
+	if got := read(t, env); got != veiled {
+		t.Fatalf("the .env file changed. An agent got the plaintext back:\n%s", got)
+	}
+
+	log := read(t, filepath.Join(root, ".secretveil", "audit.log"))
+	if !strings.Contains(log, `"event":"restore"`) || !strings.Contains(log, "refused") {
+		t.Fatalf("the refusal is not in the audit log:\n%s", log)
+	}
+	for name, v := range secrets {
+		if strings.Contains(log, v) {
+			t.Fatalf("the audit log holds the value of %s", name)
+		}
+	}
+}
+
+// A dry run stays open to an agent, because it writes nothing. If it ever
+// starts to print a value, this case fails.
+func TestADryRunOfRestoreTellsAnAgentNothing(t *testing.T) {
+	root := project(t)
+	veiled := read(t, filepath.Join(root, ".env"))
+
+	r := sv(t, root, nil, "restore", "--dry-run")
+	if r.code != 0 {
+		t.Fatalf("a dry run was refused:\n%s", r.all())
+	}
+	mustNotLeak(t, r, "case 7 dry run")
+	if got := read(t, filepath.Join(root, ".env")); got != veiled {
+		t.Fatalf("a dry run changed the file:\n%s", got)
+	}
+}
+
+// TestAHumanKeepsTheUndo is the other side of case 7. restore is how a
+// developer who tries the tool and does not like it gets their project back.
+// If it stops working for a human, the product has trapped them.
+func TestAHumanKeepsTheUndo(t *testing.T) {
+	root := project(t)
+	env := filepath.Join(root, ".env")
+
+	r := sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "restore", "--yes")
+	if r.code != 0 {
+		t.Fatalf("a human could not undo the migration:\n%s", r.all())
+	}
+	if got := read(t, env); got != envBody {
+		t.Fatalf("restore did not give back the original file.\nwant %q\ngot  %q", envBody, got)
 	}
 }
 

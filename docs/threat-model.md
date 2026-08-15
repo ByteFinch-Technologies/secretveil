@@ -5,7 +5,8 @@ stop, and where the line is. A security tool that hides its limits is worse than
 because you plan around a protection that is not there.
 
 Every claim below is tested. The test set is in `test/adversarial/`, and each case names the
-section it belongs to.
+section it belongs to. There are seven cases. Two of them assert that the tool does **not**
+stop something.
 
 ---
 
@@ -136,7 +137,22 @@ the audit log. A path in front of the name does not help: `/bin/bash` and
 flag **and** a human caller. An agent is refused, and both the refusal and a successful
 reveal go into the audit log.
 
-### 3.5 A file outside the project
+### 3.5 The undo
+
+`secretveil restore` writes every value back into the `.env` file in the clear. It is the
+same power as `get --reveal`, for every secret at once, so it has the same gate: it needs a
+human caller. An agent is refused and the refusal goes into the audit log. `restore
+--dry-run` stays open, because it writes nothing.
+
+This gate was missing in the first build of v0.1, and an agent could undo the whole tool with
+one command. It is case 7, and it was found after the first six cases were green. That is the
+reason the case list is written down: six green cases are not proof that the seventh does not
+exist.
+
+The rule this leaves behind, for every command added later: **a command that can put a value
+where a file can hold it needs a human caller.**
+
+### 3.6 A file outside the project
 
 secretveil never follows a symbolic link named `.env`. A link can point anywhere on the
 machine, and following one would let `init` read a file outside the project and write a
@@ -152,7 +168,7 @@ Three rules get different powers:
 |---|---|---|
 | Human | Standard input and standard output are both a terminal | Everything |
 | CI | A pipeline marker such as `GITHUB_ACTIONS` is set | Everything. The output filter still runs |
-| Agent | A marker such as `CLAUDECODE` is set, **or nothing matched** | No shell, no inline code, no reveal |
+| Agent | A marker such as `CLAUDECODE` is set, **or nothing matched** | No shell, no inline code, no reveal, no restore |
 
 The last row is the important one. **An unknown caller is treated as an agent.** A command
 with no terminal and no marker could be a script a developer wrote, or a tool nobody has

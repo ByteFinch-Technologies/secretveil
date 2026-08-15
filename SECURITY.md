@@ -24,6 +24,8 @@ Examples of a real report:
   output filter.
 - A command that an agent caller may run, which prints an environment variable in the clear.
 - A way to read the store, or the age identity, without the keyring.
+- Any command that writes a plaintext value to disk, or prints one, for a caller that is not
+  a human. `restore` is the one that does this on purpose, and it is gated.
 - `secretveil restore` giving back different bytes from the original file.
 - A secret value written into `.secretveil/audit.log`.
 - `init` following a symbolic link, or writing outside the project.

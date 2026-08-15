@@ -1,0 +1,43 @@
+{
+  "name": "secretveil",
+  "version": "0.1.0",
+  "description": "Let an AI coding agent work in your repository without letting it read your secrets.",
+  "keywords": [
+    "secrets",
+    "dotenv",
+    "env",
+    "ai",
+    "agent",
+    "security",
+    "redaction"
+  ],
+  "homepage": "https://github.com/ByteFinch-Technologies/secretveil#readme",
+  "bugs": "https://github.com/ByteFinch-Technologies/secretveil/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ByteFinch-Technologies/secretveil.git",
+    "directory": "npm/secretveil"
+  },
+  "license": "Apache-2.0",
+  "author": "ByteFinch Technologies",
+  "type": "commonjs",
+  "main": "index.js",
+  "bin": {
+    "secretveil": "bin/secretveil"
+  },
+  "files": [
+    "bin/secretveil",
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@secretveil/darwin-arm64": "0.1.0",
+    "@secretveil/darwin-x64": "0.1.0",
+    "@secretveil/linux-arm64": "0.1.0",
+    "@secretveil/linux-x64": "0.1.0"
+  }
+}
