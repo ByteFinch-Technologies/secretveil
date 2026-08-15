@@ -1,0 +1,143 @@
+# The gate that every change has to pass.
+#
+# Three jobs, and each one answers a different question.
+#
+#   test           Does it work, on both operating systems we support?
+#   promises       Are the two security promises still true?
+#   cross-compile  Does it still build for every platform we ship?
+#
+# The promises job is separate on purpose. If it goes red, the name in the list
+# of checks says what broke, and nobody has to open the log to find out.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A test must never reach a network. A module download that happens during a
+  # test would hide that. Everything is downloaded once, before the tests run.
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-14 is arm64 and ubuntu-latest is amd64, so the two runners
+        # cover both processor families as well as both operating systems.
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: download the modules
+        run: go mod download
+
+      - name: the source is formatted
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not formatted. Run: gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum; then
+            echo "go mod tidy changed a file. Run it and commit the result."
+            git diff -- go.mod go.sum
+            exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: go test -race -count=1 ./...
+
+  promises:
+    name: the security promises hold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: download the modules
+        run: go mod download
+
+      # An agent must not be able to get a value out. Two of the cases record a
+      # limit the product does not stop, and they assert that the theft still
+      # succeeds. A red mark here means the threat model is now wrong, in one
+      # direction or the other, and docs/threat-model.md has to change with the
+      # code.
+      - name: an agent cannot escape
+        run: go test -count=1 -v ./test/adversarial/
+
+      # The binary must not be able to send anything anywhere. This reads the
+      # build graph, so a network package that arrives through a dependency of
+      # a dependency is caught before it ships.
+      - name: the binary cannot reach a network
+        run: go test -count=1 -v ./test/nonetwork/
+
+      # A value must not reach the terminal.
+      - name: no value survives the filter
+        run: go test -count=1 -v ./test/leak/
+
+  cross-compile:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: download the modules
+        run: go mod download
+
+      # CGO is off, so one machine can build every platform and the result has
+      # no library to install. A keyring is reached through a command line
+      # program and not through a C library, which is what makes this possible.
+      - name: build
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -o "secretveil-${GOOS}-${GOARCH}" ./cmd/secretveil
+          ls -l "secretveil-${GOOS}-${GOARCH}"

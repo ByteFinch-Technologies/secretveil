@@ -1,0 +1,11 @@
+# The tool's own store. It must never reach a remote.
+.secretveil/
+
+# What a release build leaves behind.
+/dist/
+/secretveil
+/secretveil-*
+
+# What a test leaves behind.
+*.out
+*.test

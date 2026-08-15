@@ -1,0 +1,5 @@
+go test fuzz v1
+string("defdef")
+string("0")
+string("def")
+string("0")
