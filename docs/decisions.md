@@ -77,3 +77,28 @@ dotenv reported "injected env (1)", which counts only the variable that was not 
 the real value in the environment of the child process, and the handle in the `.env` file is
 never read, because the loader keeps the value that is already there. No change to the
 application is needed.
+
+---
+
+## D5. An idle flush may split one placeholder into two
+
+**Date:** 2026-08-15
+
+**Measurement.** One needle `aa` and the input `0aaaaa`. In one write the filter writes four
+placeholders. With an idle flush after `0aaa` it writes three. No byte of the input reaches
+the output in either case.
+
+**Reason.** While the stream is quiet, `idleLimit` releases a run of bytes that a needle
+already covers, so a prompt that ends with a secret still reaches the terminal instead of
+waiting for input that never comes. A run that is already complete can still grow when the
+next byte arrives, and the part that is already out cannot be taken back. The filter writes a
+second placeholder beside the first.
+
+**Effect.** The number of placeholders is not a count of secrets, and it is not stable.
+`FuzzIdleFlushIsInvariant` therefore compares the two results after each run of placeholders
+is reduced to one. It still asserts that no needle reaches the output.
+
+**How it was found.** The two fuzz targets in `internal/redact` failed on their own cached
+corpus, and `go test ./...` did not show it, because that command runs a fuzz target only
+against the few inputs in `testdata`. Both faults were in the targets, not in the filter. CI
+now runs every fuzz target for a fixed number of cases on each change.
