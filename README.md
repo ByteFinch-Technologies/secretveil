@@ -110,7 +110,7 @@ real value exactly the way it always did. The measurement is recorded as D4 in
 | `init` | Move every secret into the store and put a handle in its place. |
 | `run -- <cmd>` | Run a program with the real values, and filter them out of its output. |
 | `doctor` | Check the setup of the project and say what to fix. |
-| `restore` | Put the plaintext values back. Gives the original file byte for byte. |
+| `restore` | Put the plaintext values back. Gives the original file byte for byte. Needs a human caller. |
 | `set <ref>` | Put one secret in the store. |
 | `list` | Print the name of every secret in the store. |
 | `get <ref>` | Print one plaintext value. Needs `--reveal` and a human caller. |
@@ -167,7 +167,7 @@ Three kinds of caller get different powers.
 |---|---|---|
 | Human | Standard input and standard output are both a terminal | Everything |
 | CI | A pipeline marker such as `GITHUB_ACTIONS` is set | Everything. The filter still runs |
-| Agent | A marker such as `CLAUDECODE` is set, **or nothing matched** | No shell, no inline code, no reveal |
+| Agent | A marker such as `CLAUDECODE` is set, **or nothing matched** | No shell, no inline code, no reveal, no restore |
 
 **An unknown caller is treated as an agent.** A command with no terminal and no marker could
 be a script you wrote, or a tool nobody has heard of yet. The safe reading is the one with

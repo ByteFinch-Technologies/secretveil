@@ -9,3 +9,8 @@
 # What a test leaves behind.
 *.out
 *.test
+
+# The npm platform packages are built, not written.
+/npm/platforms/
+npm/secretveil/LICENSE
+node_modules/

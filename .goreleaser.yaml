@@ -6,7 +6,7 @@
 #
 # Try it before you tag:
 #
-#	goreleaser release --snapshot --clean
+#    goreleaser release --snapshot --clean
 version: 2
 
 project_name: secretveil

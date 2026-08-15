@@ -67,3 +67,72 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The npm job needs the same binaries. They are handed over rather than
+      # built again, so that the file a developer gets from npm is the same
+      # file that the checksum on the release page describes.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          retention-days: 1
+          path: |
+            dist/artifacts.json
+            dist/*/secretveil
+
+  npm:
+    name: publish to npm
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # --provenance asks GitHub for a short lived identity token, the same way
+      # cosign does.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # A job level "if" cannot read the secrets context, so the question is
+      # asked in a step instead. A missing token skips the publish and says so.
+      # It does not fail the release, because the binaries are already out.
+      - name: is there an npm token
+        id: token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "NPM_TOKEN is not set, so nothing is published to npm."
+            echo "See npm/README.md for what has to exist first."
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          name: dist
+          path: dist
+
+      - name: make the packages
+        if: steps.token.outputs.have == 'true'
+        run: node npm/build.mjs "${GITHUB_REF_NAME#v}"
+
+      # The platform packages go first. The main package depends on them, and a
+      # developer who installs it before its binary exists gets an error
+      # instead of a program.
+      - name: publish
+        if: steps.token.outputs.have == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -e
+          for d in npm/platforms/*; do
+            npm publish "./$d" --access public --provenance
+          done
+          npm publish ./npm/secretveil --access public --provenance
