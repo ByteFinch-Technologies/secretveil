@@ -50,6 +50,30 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ
 PORT=3000
 `,
 	},
+	"a node project with a registry token": {
+		".env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
+		".npmrc": `registry=https://registry.npmjs.org/
+//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B
+save-exact=true
+`,
+		"package.json": "{\n  \"name\": \"app\"\n}\n",
+	},
+	"a project with two registries and a comment": {
+		".env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
+		".npmrc": `# The public registry.
+//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B
+
+; The private one.
+@acme:registry=https://npm.pkg.github.com/
+//npm.pkg.github.com/:_authToken=ghp_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf
+`,
+	},
+	"a workspace whose .npmrc is not at the top": {
+		".env":                  "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
+		"packages/api/.npmrc":   "//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\r\n",
+		"packages/web/.npmrc":   "//registry.npmjs.org/:_authToken=npm_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf",
+		"packages/api/index.js": "console.log('hello')\n",
+	},
 }
 
 // TestInitThenRestoreGivesBackTheSameBytes is a release gate.

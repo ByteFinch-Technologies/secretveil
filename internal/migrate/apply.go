@@ -15,6 +15,7 @@ import (
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/classify"
 	"github.com/ByteFinch-Technologies/secretveil/internal/envfile"
+	"github.com/ByteFinch-Technologies/secretveil/internal/npmrc"
 )
 
 // Phase names one step of the migration. Each phase can be undone, and a
@@ -156,7 +157,7 @@ func Apply(ctx context.Context, st SecretStore, opt Options) (*Result, error) {
 		return nil, fmt.Errorf("the phase %q failed: %w", PhasePlan, err)
 	}
 	if len(plan.Files) == 0 {
-		return nil, errors.New("there is no .env file with values here")
+		return nil, errors.New("there is no .env or .npmrc file with values here")
 	}
 	secrets, err := plan.Secrets(os.ReadFile)
 	if err != nil {
@@ -285,8 +286,52 @@ func Apply(ctx context.Context, st SecretStore, opt Options) (*Result, error) {
 	return res, nil
 }
 
-// rewrite turns the plaintext of one file into the handle form.
+// rewrite turns the plaintext of one file into the reference form.
 func rewrite(src []byte, f FilePlan) ([]byte, bool, error) {
+	if f.kind() == KindNpmrc {
+		return rewriteNpmrc(src, f)
+	}
+	return rewriteDotenv(src, f)
+}
+
+// rewriteNpmrc puts a ${SV_NPMRC_...} marker in place of each credential.
+//
+// There is no shape comment here. npm reads this file with its own parser, and
+// a comment this tool invented could change what npm sees. The shape is of
+// little use in this file in any case: nobody writes code against a registry
+// token, they only need npm to authenticate.
+//
+// Each entry names a line and not a key, because an .npmrc file may name the
+// same key twice. The key on that line is checked before the write, so a file
+// that changed since the plan was built stops the migration instead of losing
+// a value.
+func rewriteNpmrc(src []byte, f FilePlan) ([]byte, bool, error) {
+	parsed := npmrc.Parse(src)
+	changed := false
+	for _, e := range f.Entries {
+		if e.Decision.Class == classify.Open {
+			continue
+		}
+		if e.Line < 1 || e.Line > len(parsed.Lines) {
+			return nil, false, fmt.Errorf("line %d is gone from the file", e.Line)
+		}
+		line := &parsed.Lines[e.Line-1]
+		if line.Key != e.Key {
+			return nil, false, fmt.Errorf("line %d now holds %q and not %q", e.Line, line.Key, e.Key)
+		}
+		if !line.Set(e.Projected) {
+			return nil, false, fmt.Errorf("the value of %s on line %d could not be replaced", e.Key, e.Line)
+		}
+		changed = true
+	}
+	if !changed {
+		return src, false, nil
+	}
+	return parsed.Bytes(), true, nil
+}
+
+// rewriteDotenv puts an sv:// handle in place of each secret.
+func rewriteDotenv(src []byte, f FilePlan) ([]byte, bool, error) {
 	parsed := envfile.Parse(src)
 	inline := map[string]string{}
 	for _, line := range parsed.Assignments() {
@@ -342,9 +387,8 @@ func resolveCollisions(p *Plan, root string) map[string]string {
 		if err != nil {
 			continue
 		}
-		parsed := envfile.Parse(src)
 		for ei, e := range f.Entries {
-			v, ok := parsed.Get(e.Key)
+			v, ok := entryValue(f.kind(), src, e)
 			if !ok {
 				continue
 			}
@@ -387,7 +431,7 @@ func resolveCollisions(p *Plan, root string) map[string]string {
 		// The first owner keeps the plain name. Every other owner gets the
 		// name of its file in front, so the new name still reads well.
 		for _, o := range list[1:] {
-			base := slug(rel(root, p.Files[o.file].Path)) + "_" + ref
+			base := renameRef(p.Files[o.file].kind(), ref, slug(rel(root, p.Files[o.file].Path)))
 			name := base
 			for n := 2; taken[name]; n++ {
 				name = fmt.Sprintf("%s_%d", base, n)
@@ -396,19 +440,43 @@ func resolveCollisions(p *Plan, root string) map[string]string {
 			renamed[ref] = name
 			entry := &p.Files[o.file].Entries[o.entry]
 			entry.Decision.Spans[o.span].Ref = name
-			refreshEntry(entry, o.full)
+			refreshEntry(p.Files[o.file].kind(), entry, o.full)
 		}
 	}
 	return renamed
 }
 
+// renameRef builds a new reference that names the file it came from.
+//
+// A reference from an .npmrc file must keep the npmrc_ prefix. That prefix is
+// the only thing that tells restore and run that a ${SV_...} marker is one this
+// tool wrote. A rename that put the file name in front of it made restore walk
+// past the marker and leave it on disk, so the developer got a file that npm
+// could not use.
+func renameRef(kind FileKind, ref, from string) string {
+	if kind == KindNpmrc {
+		return npmrc.RefPrefix + from + "_" + strings.TrimPrefix(ref, npmrc.RefPrefix)
+	}
+	return from + "_" + ref
+}
+
 // refreshEntry rebuilds the projected text and the reference list of an entry
 // after a span changed. The rewrite writes the projected text into the file,
 // so a rename that misses it puts the wrong handle on disk.
-func refreshEntry(e *Entry, value string) {
+//
+// The two kinds of file do not take the same text. A .env file takes an sv://
+// handle around the span. An .npmrc file takes a ${SV_NPMRC_...} marker, and the
+// whole value is always one span, so the marker of that span is the whole line.
+func refreshEntry(kind FileKind, e *Entry, value string) {
 	e.Refs = e.Refs[:0]
 	for _, s := range e.Decision.Spans {
 		e.Refs = append(e.Refs, s.Ref)
+	}
+	if kind == KindNpmrc {
+		if len(e.Decision.Spans) == 1 {
+			e.Projected = npmrc.Marker(e.Decision.Spans[0].Ref)
+		}
+		return
 	}
 	e.Projected = classify.Project(value, e.Decision)
 }

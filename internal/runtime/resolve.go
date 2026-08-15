@@ -3,7 +3,10 @@
 // It does three things, and nothing else:
 //
 //   - It reads the .env files, replaces each sv:// handle with the real value
-//     from the store, and puts the result in the child environment.
+//     from the store, and puts the result in the child environment. It also
+//     reads the .npmrc files and puts the value of each ${SV_NPMRC_...} marker
+//     in the child environment under that name, because npm expands the marker
+//     itself.
 //   - It starts the child on a pseudo terminal, so a program that asks a
 //     question still behaves like a program in a terminal.
 //   - It passes every byte of the child output through the filter, so a secret
@@ -23,6 +26,8 @@ import (
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/envfile"
 	"github.com/ByteFinch-Technologies/secretveil/internal/handle"
+	"github.com/ByteFinch-Technologies/secretveil/internal/migrate"
+	"github.com/ByteFinch-Technologies/secretveil/internal/npmrc"
 	"github.com/ByteFinch-Technologies/secretveil/internal/store"
 )
 
@@ -150,6 +155,58 @@ func Resolve(ctx context.Context, st store.Store, opt Options) (*Resolution, err
 				order = append(order, line.Key)
 			}
 			final[line.Key] = value
+		}
+	}
+
+	// An .npmrc file cannot hold a handle, because npm reads the file from disk
+	// and would send the handle to the registry. It holds a ${SV_NPMRC_...}
+	// marker instead, and npm expands that marker from the environment. So the
+	// work here is to put the value in the environment under that name.
+	//
+	// Every .npmrc under the directory is read, and not only the one at the top,
+	// because init rewrites every one of them. A workspace whose .npmrc was
+	// rewritten but whose variable was never set would fail at the registry with
+	// nothing to point at.
+	npmrcs, err := migrate.DiscoverNpmrc(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range npmrcs {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		refs := npmrc.Markers(string(src))
+		if len(refs) == 0 {
+			continue
+		}
+		res.Files = append(res.Files, path)
+		for _, ref := range refs {
+			name := npmrc.Var(ref)
+			if held[name] {
+				skipped[mark(&res.Skipped, skipped, name)] = true
+				continue
+			}
+			if gone[ref] {
+				continue
+			}
+			v, ok := cache[ref]
+			if !ok {
+				got, err := st.Get(ctx, ref)
+				if err != nil {
+					gone[ref] = true
+					addOnce(&res.Missing, ref)
+					continue
+				}
+				v = got
+				cache[ref] = v
+				res.Values[ref] = v
+			}
+			if _, seen := final[name]; !seen {
+				order = append(order, name)
+			}
+			final[name] = v
+			res.Handles++
 		}
 	}
 
