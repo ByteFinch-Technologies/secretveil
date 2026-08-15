@@ -55,9 +55,19 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+# A bill of materials goes beside each archive. It lists every module that went
+# into the binary, so a reader can answer "does this hold the package with the
+# new advisory" without a build machine. syft writes it, and the file is in the
+# SPDX format.
+sboms:
+  - id: archive
+    artifacts: archive
+
 # The checksum file is signed with cosign in keyless mode. There is no private
-# key to keep safe and no key to lose. The signature records which workflow, on
-# which commit, made the file, and anyone can check it:
+# key to keep safe and no key to lose. One signature over the checksum file
+# covers every artifact, because the checksum file names each one and holds its
+# hash. The signature records which workflow, on which commit, made the file,
+# and anyone can check it:
 #
 #	cosign verify-blob checksums.txt \
 #	  --certificate checksums.txt.pem \

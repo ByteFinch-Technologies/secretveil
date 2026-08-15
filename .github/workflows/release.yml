@@ -61,6 +61,9 @@ jobs:
 
       - uses: sigstore/cosign-installer@v3
 
+      # syft writes the bill of materials that goes beside each archive.
+      - uses: anchore/sbom-action/download-syft@v0
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
