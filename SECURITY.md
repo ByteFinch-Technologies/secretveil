@@ -68,4 +68,9 @@ v0.1 is the current release. Only the latest release gets a fix.
 - No secret value is ever written to the audit log, to a plan, or to any diagnostic output.
 - No corpus, fixture or test in this repository holds a real credential. Every value is
   invented.
-- A release is built by CI from a tagged commit, and the checksums are signed.
+- A release is built by CI from a tagged commit, and the checksums are signed. One signature
+  over the checksum file covers every artifact, because that file names each one and holds
+  its hash.
+- Each release carries a bill of materials beside each archive, in the SPDX format. It lists
+  every module in the binary, so you can answer "does this hold the package with the new
+  advisory" without a build machine.
