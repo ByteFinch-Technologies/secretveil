@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/classify"
+	"github.com/ByteFinch-Technologies/secretveil/internal/coverage"
 	"github.com/ByteFinch-Technologies/secretveil/internal/detect"
 	"github.com/ByteFinch-Technologies/secretveil/internal/envfile"
 	"github.com/ByteFinch-Technologies/secretveil/internal/handle"
@@ -42,6 +44,11 @@ func (l level) mark() string {
 	}
 }
 
+// scopeNote states the limit of the report. It prints under every summary,
+// including a clean one, because a developer reads the last line and stops.
+const scopeNote = "These checks read the .env files, the store and a short list of known credential\n" +
+	"files. A secret in any other kind of file is not covered and was not looked at."
+
 // finding is one line of the report.
 type finding struct {
 	level level
@@ -60,6 +67,10 @@ later. It writes nothing and it changes nothing.
 It checks that the store opens on this machine, that every handle in your .env
 files has a value behind it, that no plaintext secret is left in a file, that
 .gitignore covers the store, and that the policy file loads.
+
+It also names a credential in a file that secretveil does not rewrite, such as
+.npmrc or .netrc. It cannot protect those files, and it says so rather than
+report a clean project.
 
 The exit code is 0 when nothing is wrong, and 1 when a check found something
 that puts a secret at risk. A note or a warning does not change the exit code.`,
@@ -84,15 +95,22 @@ that puts a secret at risk. A note or a warning does not change the exit code.`,
 				}
 			}
 
+			// Each line below says what the checks found. None of them says
+			// that the project holds no secret, because doctor reads the .env
+			// files, the store and a short list of known credential files, and
+			// it does not read the rest of the repository. A summary that
+			// claimed more than that would tell the developer to stop looking.
 			switch worst {
 			case levelOK:
-				fmt.Fprintln(out, "\nEverything checks out.")
+				fmt.Fprintln(out, "\nEvery check passed.")
 			case levelBad:
 				fmt.Fprintln(out, "\nSomething here puts a secret at risk. Fix the BAD lines first.")
+				fmt.Fprintln(out, scopeNote)
 				return &exitError{code: 1}
 			default:
-				fmt.Fprintln(out, "\nNothing is at risk. The lines above are worth a look.")
+				fmt.Fprintln(out, "\nNo check found a secret at risk. Read the lines above.")
 			}
+			fmt.Fprintln(out, scopeNote)
 			return nil
 		},
 	}
@@ -125,6 +143,7 @@ func runChecks(ctx context.Context, root string) []finding {
 	}
 
 	add(checkPlaintext(plan))
+	add(checkUncovered(root))
 	used := handlesInFiles(root)
 	add(checkDangling(ctx, st, used))
 	add(checkOrphans(refs, used))
@@ -192,6 +211,53 @@ func checkPlaintext(plan *migrate.Plan) finding {
 		fmt.Sprintf("%d plaintext secrets are still in the files an agent reads", len(where)),
 		append(where, "Run \"secretveil init\" to move them into the store."),
 	}
+}
+
+// checkUncovered names a credential that secretveil does not put a handle into.
+//
+// This check exists because the report used to end with "nothing is at risk"
+// while an npm token sat in .npmrc in the same directory. doctor had never
+// opened that file. The honest report names the file and says plainly that the
+// tool does not cover it.
+//
+// The level is a warning and not a fault, so the exit code stays 0. A project
+// can hold a .netrc that nothing can fix, and a check that fails forever is a
+// check that developers learn to ignore.
+func checkUncovered(root string) finding {
+	found, err := coverage.Scan(root, migrate.SkipDir, nil)
+	if err != nil {
+		return finding{levelNote, "the search for other credential files did not finish: " + err.Error(), nil}
+	}
+	if len(found) == 0 {
+		return finding{levelOK,
+			"no other known credential file holds a value here", []string{
+				"Checked for: " + strings.Join(coverage.Kinds(), ", ") + ".",
+			}}
+	}
+	detail := make([]string, 0, len(found)*2+1)
+	for _, f := range found {
+		where := relTo(root, f.Path)
+		// The kind is only worth printing when it does not repeat the name of
+		// the file. ".npmrc (.npmrc)" tells the reader nothing.
+		if filepath.Base(f.Path) != f.Kind {
+			where += " (" + f.Kind + ")"
+		}
+		detail = append(detail, fmt.Sprintf("%s, line %s: %s", where, joinInts(f.Lines), f.Advice))
+	}
+	detail = append(detail,
+		"secretveil does not rewrite these files, so init and doctor cannot protect them.")
+	return finding{levelWarn,
+		fmt.Sprintf("%d file(s) hold a credential that secretveil does not cover", len(found)),
+		detail}
+}
+
+// joinInts renders a list of line numbers.
+func joinInts(list []int) string {
+	parts := make([]string, 0, len(list))
+	for _, n := range list {
+		parts = append(parts, strconv.Itoa(n))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // checkDangling finds a handle with no value behind it. The program would start

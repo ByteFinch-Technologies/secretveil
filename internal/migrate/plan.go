@@ -21,6 +21,11 @@ var skipDir = map[string]bool{
 	"coverage": true, ".terraform": true,
 }
 
+// SkipDir reports whether a directory name is one that never holds a project
+// secret file. Every scanner in the program uses this one list, so a directory
+// that one check walks past is a directory every check walks past.
+func SkipDir(name string) bool { return skipDir[name] }
+
 // sampleSuffix names a file that holds placeholders, not values.
 var sampleSuffix = []string{".example", ".sample", ".template", ".dist", ".defaults"}
 
