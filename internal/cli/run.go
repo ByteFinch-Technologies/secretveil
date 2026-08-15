@@ -172,7 +172,7 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 // value, only a count and a name.
 func report(w io.Writer, res *runtime.Resolution) {
 	if len(res.Files) == 0 {
-		fmt.Fprintln(w, "secretveil: no .env file here. The program starts with the environment as it is.")
+		fmt.Fprintln(w, "secretveil: no .env or .npmrc file here. The program starts with the environment as it is.")
 		return
 	}
 	names := make([]string, 0, len(res.Files))

@@ -133,20 +133,39 @@ func TestSkipDirIsObeyed(t *testing.T) {
 	}
 }
 
-// TestCoveredPathIsNotReported proves the check goes quiet for a format the
-// migration learns to rewrite, so one file is never named by two checks.
-func TestCoveredPathIsNotReported(t *testing.T) {
+// TestCoveredLineIsNotReported proves the check goes quiet for a line the
+// migration rewrites, so one line is never named by two checks.
+func TestCoveredLineIsNotReported(t *testing.T) {
 	root := t.TempDir()
 	path := write(t, root, ".npmrc",
 		"//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n")
 
-	covered := func(p string) bool { return p == path }
+	covered := func(p string, line int) bool { return p == path && line == 1 }
 	found, err := Scan(root, nil, covered)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(found) != 0 {
-		t.Errorf("want no finding for a covered path, got %+v", found)
+		t.Errorf("want no finding for a covered line, got %+v", found)
+	}
+}
+
+// TestUncoveredLineSurvivesACoveredOne is the reason the test is per line. One
+// .npmrc can hold a line the migration rewrites and a line it refuses, and the
+// second one must still reach the report.
+func TestUncoveredLineSurvivesACoveredOne(t *testing.T) {
+	root := t.TempDir()
+	path := write(t, root, ".npmrc",
+		"//a.example.com/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n"+
+			"//b.example.com/:_authToken=npm_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf\n")
+
+	covered := func(p string, line int) bool { return p == path && line == 1 }
+	found, err := Scan(root, nil, covered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || len(found[0].Lines) != 1 || found[0].Lines[0] != 2 {
+		t.Fatalf("want only line 2 reported, got %+v", found)
 	}
 }
 

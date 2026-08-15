@@ -122,3 +122,43 @@ second process to the start of `run` will show up here at once.
 **A trap for the next measurement.** The first attempt reported 97 ms. The keychain entry of
 that old fixture had been deleted, so every run was taking an error path. Check the exit code
 of the command you are timing.
+
+---
+
+## D7. npm expands `${VAR}` in an `.npmrc`, so that file takes a marker and not a handle
+
+**Date:** 2026-08-16
+
+**Measurement.** A project `.npmrc` held `my-custom-key=${MY_TOKEN}`. With `MY_TOKEN` set to
+`EXPANDED_VALUE`, `npm config get my-custom-key` returned `EXPANDED_VALUE`. With `MY_TOKEN`
+unset, the same command returned the literal text `${MY_TOKEN}`. npm reads a project `.npmrc`
+only when a `package.json` sits beside it.
+
+**Reason.** An `.npmrc` cannot hold an `sv://` handle. npm reads the file from disk and sends
+the value it finds to the registry, so a handle would go over the wire as if it were the
+token. There is no precedence rule to lean on here, which is what makes a `.env` file work
+(see D4). The variable expansion above is the one opening npm gives, and this design uses it.
+
+**Effect.** `secretveil init` writes `${SV_NPMRC_...}` into an `.npmrc`, and `secretveil run`
+puts the value in the child environment under that name. A project that forgets to use
+`secretveil run` sends the literal `${SV_NPMRC_...}` to the registry, which fails with a clear
+refusal and leaks nothing.
+
+**Why the parser is narrow.** npm reads this file with its own ini parser, and that parser does
+not agree with the `.env` parser on quoting or on inline comments. A line is rewritten only
+when the value is a plain token: no space, no quote, no comment character. Every real registry
+token has that shape. `npmrc.Line.Set` renders the candidate line and reads it back, and
+refuses any write that would not read back as the same value.
+
+**Why no shape comment.** A `.env` line gets a trailing `# sv:` comment that names the length
+and the character set. An `.npmrc` line gets none, because npm parses this file itself and a
+comment this tool invented could change what npm sees.
+
+**What this does not cover.** A `.netrc` cannot be fixed at all: curl, git and ftp read it
+literally and expand nothing. A `.yarnrc.yml` does expand `${VAR}`, but it is YAML and would
+need a round-trip YAML parser. `doctor` reports both rather than rewriting them.
+
+**How the design was tested.** `npm config get //registry.npmjs.org/:_authToken` refuses with
+"option is protected", so the measurement above used a key npm does not protect. The end to
+end check ran `secretveil run -- npm config get my-custom-key` against a marker and saw the
+output filter replace the expanded token with its reference.

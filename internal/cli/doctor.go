@@ -15,6 +15,7 @@ import (
 	"github.com/ByteFinch-Technologies/secretveil/internal/envfile"
 	"github.com/ByteFinch-Technologies/secretveil/internal/handle"
 	"github.com/ByteFinch-Technologies/secretveil/internal/migrate"
+	"github.com/ByteFinch-Technologies/secretveil/internal/npmrc"
 	"github.com/ByteFinch-Technologies/secretveil/internal/policy"
 	"github.com/ByteFinch-Technologies/secretveil/internal/project"
 	"github.com/ByteFinch-Technologies/secretveil/internal/store/agefile"
@@ -46,8 +47,9 @@ func (l level) mark() string {
 
 // scopeNote states the limit of the report. It prints under every summary,
 // including a clean one, because a developer reads the last line and stops.
-const scopeNote = "These checks read the .env files, the store and a short list of known credential\n" +
-	"files. A secret in any other kind of file is not covered and was not looked at."
+const scopeNote = "These checks read the .env files, the .npmrc files, the store and a short list\n" +
+	"of known credential files. A secret in any other kind of file is not covered\n" +
+	"and was not looked at."
 
 // finding is one line of the report.
 type finding struct {
@@ -64,12 +66,12 @@ func newDoctor() *cobra.Command {
 		Long: `doctor looks at the project and reports anything that would surprise you
 later. It writes nothing and it changes nothing.
 
-It checks that the store opens on this machine, that every handle in your .env
-files has a value behind it, that no plaintext secret is left in a file, that
-.gitignore covers the store, and that the policy file loads.
+It checks that the store opens on this machine, that every reference in your
+.env and .npmrc files has a value behind it, that no plaintext secret is left in
+a file, that .gitignore covers the store, and that the policy file loads.
 
 It also names a credential in a file that secretveil does not rewrite, such as
-.npmrc or .netrc. It cannot protect those files, and it says so rather than
+.netrc or .yarnrc.yml. It cannot protect those files, and it says so rather than
 report a clean project.
 
 The exit code is 0 when nothing is wrong, and 1 when a check found something
@@ -143,7 +145,7 @@ func runChecks(ctx context.Context, root string) []finding {
 	}
 
 	add(checkPlaintext(plan))
-	add(checkUncovered(root))
+	add(checkUncovered(root, plan))
 	used := handlesInFiles(root)
 	add(checkDangling(ctx, st, used))
 	add(checkOrphans(refs, used))
@@ -201,7 +203,7 @@ func checkPlaintext(plan *migrate.Plan) finding {
 		}
 	}
 	if len(where) == 0 {
-		return finding{levelOK, "no .env file holds a plaintext secret", nil}
+		return finding{levelOK, "no .env or .npmrc file holds a plaintext secret", nil}
 	}
 	if len(where) > 8 {
 		rest := len(where) - 8
@@ -223,8 +225,8 @@ func checkPlaintext(plan *migrate.Plan) finding {
 // The level is a warning and not a fault, so the exit code stays 0. A project
 // can hold a .netrc that nothing can fix, and a check that fails forever is a
 // check that developers learn to ignore.
-func checkUncovered(root string) finding {
-	found, err := coverage.Scan(root, migrate.SkipDir, nil)
+func checkUncovered(root string, plan *migrate.Plan) finding {
+	found, err := coverage.Scan(root, migrate.SkipDir, plannedLine(plan))
 	if err != nil {
 		return finding{levelNote, "the search for other credential files did not finish: " + err.Error(), nil}
 	}
@@ -245,10 +247,33 @@ func checkUncovered(root string) finding {
 		detail = append(detail, fmt.Sprintf("%s, line %s: %s", where, joinInts(f.Lines), f.Advice))
 	}
 	detail = append(detail,
-		"secretveil does not rewrite these files, so init and doctor cannot protect them.")
+		"secretveil does not rewrite these lines, so init and doctor cannot protect them.")
 	return finding{levelWarn,
 		fmt.Sprintf("%d file(s) hold a credential that secretveil does not cover", len(found)),
 		detail}
+}
+
+// plannedLine reports whether the migration already handles one line of one
+// file. The line that "secretveil init" rewrites belongs to the plaintext check,
+// and the line it cannot rewrite belongs to the check above. A line that both
+// checks named, or that neither named, would be a fault in the report.
+func plannedLine(plan *migrate.Plan) func(path string, line int) bool {
+	if plan == nil {
+		return nil
+	}
+	planned := map[string]map[int]bool{}
+	for _, f := range plan.Files {
+		for _, e := range f.Entries {
+			if e.Line == 0 {
+				continue
+			}
+			if planned[f.Path] == nil {
+				planned[f.Path] = map[int]bool{}
+			}
+			planned[f.Path][e.Line] = true
+		}
+	}
+	return func(path string, line int) bool { return planned[path][line] }
 }
 
 // joinInts renders a list of line numbers.
@@ -267,7 +292,7 @@ func checkDangling(ctx context.Context, st interface {
 }, used map[string][]string,
 ) finding {
 	if len(used) == 0 {
-		return finding{levelOK, "no .env file uses a handle yet", nil}
+		return finding{levelOK, "no file uses a reference yet", nil}
 	}
 	var missing []string
 	for ref := range used {
@@ -277,7 +302,7 @@ func checkDangling(ctx context.Context, st interface {
 	}
 	if len(missing) == 0 {
 		return finding{levelOK,
-			fmt.Sprintf("all %d handles in the .env files have a value behind them", len(used)), nil}
+			fmt.Sprintf("all %d references in the project files have a value behind them", len(used)), nil}
 	}
 	sort.Strings(missing)
 
@@ -306,7 +331,7 @@ func checkOrphans(refs []string, used map[string][]string) finding {
 			fmt.Sprintf("all %d values in the store are used by a file", len(refs)), nil}
 	}
 	return finding{levelNote,
-		fmt.Sprintf("%d values in the store are not used by any .env file", len(spare)),
+		fmt.Sprintf("%d values in the store are not used by any file", len(spare)),
 		[]string{
 			strings.Join(spare, ", "),
 			"This is not a risk. Run \"secretveil rm <ref>\" if you no longer need one.",
@@ -388,25 +413,43 @@ func checkPolicy(root string) finding {
 	return finding{levelOK, "the policy file loads and the command rules are on", nil}
 }
 
-// handlesInFiles maps every reference in the .env files to the files that use
-// it.
+// handlesInFiles maps every reference in the project files to the files that
+// use it.
+//
+// The .npmrc files are read as well as the .env files. Without them, doctor
+// called every registry token an orphan and told the developer to remove it.
+// That advice would have broken npm and lost the token.
 func handlesInFiles(root string) map[string][]string {
 	used := map[string][]string{}
-	paths, err := migrate.Discover(root)
-	if err != nil {
-		return used
-	}
-	for _, path := range paths {
-		src, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
+	mark := func(path, ref string) {
 		name := relTo(root, path)
-		for _, line := range envfile.Parse(src).Assignments() {
-			for _, ref := range handle.Refs(line.Value) {
-				if !containsString(used[ref], name) {
-					used[ref] = append(used[ref], name)
+		if !containsString(used[ref], name) {
+			used[ref] = append(used[ref], name)
+		}
+	}
+
+	if paths, err := migrate.Discover(root); err == nil {
+		for _, path := range paths {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			for _, line := range envfile.Parse(src).Assignments() {
+				for _, ref := range handle.Refs(line.Value) {
+					mark(path, ref)
 				}
+			}
+		}
+	}
+
+	if paths, err := migrate.DiscoverNpmrc(root); err == nil {
+		for _, path := range paths {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			for _, ref := range npmrc.Markers(string(src)) {
+				mark(path, ref)
 			}
 		}
 	}
