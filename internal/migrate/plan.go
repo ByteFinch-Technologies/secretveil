@@ -11,6 +11,9 @@ import (
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/classify"
 	"github.com/ByteFinch-Technologies/secretveil/internal/envfile"
+	"github.com/ByteFinch-Technologies/secretveil/internal/handle"
+	"github.com/ByteFinch-Technologies/secretveil/internal/npmrc"
+	"github.com/ByteFinch-Technologies/secretveil/internal/shape"
 )
 
 // skipDir names a directory that never holds a project secret file.
@@ -29,18 +32,48 @@ func SkipDir(name string) bool { return skipDir[name] }
 // sampleSuffix names a file that holds placeholders, not values.
 var sampleSuffix = []string{".example", ".sample", ".template", ".dist", ".defaults"}
 
+// FileKind says which parser reads a file, and which form of reference goes
+// into it.
+type FileKind string
+
+const (
+	// KindDotenv is a .env file. It takes an sv:// handle, because every
+	// framework lets a variable in the environment beat the file.
+	KindDotenv FileKind = "dotenv"
+	// KindNpmrc is an .npmrc file. It takes a ${SV_NPMRC_...} marker instead.
+	// npm reads the file straight from disk and has no precedence rule, so a
+	// handle would go to the registry as if it were the token. npm does expand
+	// a variable from the environment, and that is the opening this uses.
+	KindNpmrc FileKind = "npmrc"
+)
+
 // Entry is one variable in one file.
 type Entry struct {
 	Key       string            `json:"key"`
 	Decision  classify.Decision `json:"decision"`
 	Projected string            `json:"projected"`
 	Refs      []string          `json:"refs"`
+	// Line is the 1-based line of the record, for a file kind that is
+	// addressed by position. An .npmrc file may name the same key twice, and a
+	// rewrite that went by name could touch the wrong line and leave the live
+	// token on disk. A zero means the file is addressed by key.
+	Line int `json:"line,omitempty"`
 }
 
 // FilePlan is the work for one file.
 type FilePlan struct {
-	Path    string  `json:"path"`
-	Entries []Entry `json:"entries"`
+	Path    string   `json:"path"`
+	Kind    FileKind `json:"kind"`
+	Entries []Entry  `json:"entries"`
+}
+
+// kind returns the kind of a file plan, and treats an unset value as a .env
+// file so a plan decoded from an older run still reads correctly.
+func (f FilePlan) kind() FileKind {
+	if f.Kind == "" {
+		return KindDotenv
+	}
+	return f.Kind
 }
 
 // Counts summarises a plan.
@@ -61,6 +94,30 @@ type Plan struct {
 	Links []string `json:"links,omitempty"`
 }
 
+// entryValue returns the value that one planned entry names, read from the
+// bytes of its file.
+//
+// This is the one place that knows how each kind of file is addressed. A .env
+// file is addressed by key, because that is what a loader does. An .npmrc file
+// is addressed by line, because the same key may appear twice and only the
+// position says which record holds which value.
+func entryValue(kind FileKind, src []byte, e Entry) (string, bool) {
+	if kind == KindNpmrc {
+		lines := npmrc.Parse(src).Lines
+		if e.Line < 1 || e.Line > len(lines) {
+			return "", false
+		}
+		line := lines[e.Line-1]
+		if line.Key != e.Key {
+			// The file changed under the plan. Touching it now would rewrite
+			// the wrong record.
+			return "", false
+		}
+		return line.Value, true
+	}
+	return envfile.Parse(src).Get(e.Key)
+}
+
 // Secrets returns the reference and the real value of everything that must go
 // into the store. The caller must not log this map.
 func (p *Plan) Secrets(read func(path string) ([]byte, error)) (map[string]string, error) {
@@ -70,12 +127,11 @@ func (p *Plan) Secrets(read func(path string) ([]byte, error)) (map[string]strin
 		if err != nil {
 			return nil, err
 		}
-		parsed := envfile.Parse(src)
 		for _, e := range f.Entries {
 			if e.Decision.Class == classify.Open {
 				continue
 			}
-			value, ok := parsed.Get(e.Key)
+			value, ok := entryValue(f.kind(), src, e)
 			if !ok {
 				continue
 			}
@@ -103,10 +159,44 @@ func IsSecretFile(base string) bool {
 	return true
 }
 
-// Discover finds every candidate file under a root.
+// Discover finds every .env file under a root.
 func Discover(root string) ([]string, error) {
 	found, _, err := discover(root)
-	return found, err
+	return pathsOfKind(found, KindDotenv), err
+}
+
+// DiscoverNpmrc finds every .npmrc file under a root.
+func DiscoverNpmrc(root string) ([]string, error) {
+	found, _, err := discover(root)
+	return pathsOfKind(found, KindNpmrc), err
+}
+
+// candidate is one file the migration may work on.
+type candidate struct {
+	path string
+	kind FileKind
+}
+
+func pathsOfKind(list []candidate, kind FileKind) []string {
+	var out []string
+	for _, c := range list {
+		if c.kind == kind {
+			out = append(out, c.path)
+		}
+	}
+	return out
+}
+
+// kindOf returns the kind of a base name, and false when the file is not one
+// this program works on.
+func kindOf(base string) (FileKind, bool) {
+	switch {
+	case IsSecretFile(base):
+		return KindDotenv, true
+	case npmrc.IsFile(base):
+		return KindNpmrc, true
+	}
+	return "", false
 }
 
 // discover returns the files to work on, and the symbolic links it refused to
@@ -118,7 +208,7 @@ func Discover(root string) ([]string, error) {
 // which of its lines look like secrets, and write a rewritten copy inside the
 // project. That would move content from outside the project to inside it, which
 // is the opposite of what this tool is for.
-func discover(root string) (found, links []string, err error) {
+func discover(root string) (found []candidate, links []string, err error) {
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, werr error) error {
 		if werr != nil {
 			return nil
@@ -129,17 +219,18 @@ func discover(root string) (found, links []string, err error) {
 			}
 			return nil
 		}
-		if !IsSecretFile(d.Name()) {
+		kind, ok := kindOf(d.Name())
+		if !ok {
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 {
 			links = append(links, path)
 			return nil
 		}
-		found = append(found, path)
+		found = append(found, candidate{path: path, kind: kind})
 		return nil
 	})
-	sort.Strings(found)
+	sort.Slice(found, func(i, j int) bool { return found[i].path < found[j].path })
 	sort.Strings(links)
 	return found, links, err
 }
@@ -152,26 +243,19 @@ func BuildPlan(root string) (*Plan, error) {
 		return nil, err
 	}
 	p := &Plan{Root: root, Links: links}
-	for _, path := range paths {
-		src, err := os.ReadFile(path)
+	for _, c := range paths {
+		src, err := os.ReadFile(c.path)
 		if err != nil {
 			continue
 		}
-		fp := FilePlan{Path: path}
-		for _, line := range envfile.Parse(src).Assignments() {
-			d := classify.Classify(line.Key, line.Value)
-			projected := classify.Project(line.Value, d)
-			refs := make([]string, 0, len(d.Spans))
-			for _, s := range d.Spans {
-				refs = append(refs, s.Ref)
-			}
-			fp.Entries = append(fp.Entries, Entry{
-				Key:       line.Key,
-				Decision:  d,
-				Projected: projected,
-				Refs:      refs,
-			})
-			switch d.Class {
+		fp := FilePlan{Path: c.path, Kind: c.kind}
+		if c.kind == KindNpmrc {
+			fp.Entries = planNpmrc(src)
+		} else {
+			fp.Entries = planDotenv(src)
+		}
+		for _, e := range fp.Entries {
+			switch e.Decision.Class {
 			case classify.Open:
 				p.Counts.Open++
 			case classify.Partial:
@@ -186,6 +270,55 @@ func BuildPlan(root string) (*Plan, error) {
 		}
 	}
 	return p, nil
+}
+
+// planDotenv classifies every variable in a .env file.
+func planDotenv(src []byte) []Entry {
+	var out []Entry
+	for _, line := range envfile.Parse(src).Assignments() {
+		d := classify.Classify(line.Key, line.Value)
+		refs := make([]string, 0, len(d.Spans))
+		for _, s := range d.Spans {
+			refs = append(refs, s.Ref)
+		}
+		out = append(out, Entry{
+			Key:       line.Key,
+			Decision:  d,
+			Projected: classify.Project(line.Value, d),
+			Refs:      refs,
+		})
+	}
+	return out
+}
+
+// planNpmrc finds every registry credential in an .npmrc file.
+//
+// Only a line the npmrc package calls a credential becomes an entry. An
+// ordinary setting such as a registry address is not planned at all, because
+// npm needs to read it as it stands and there is nothing to hide in it.
+func planNpmrc(src []byte) []Entry {
+	var out []Entry
+	lines := npmrc.Parse(src).Lines
+	for i := range lines {
+		line := &lines[i]
+		if !line.IsCredential() {
+			continue
+		}
+		ref := npmrc.Ref(line.Key)
+		out = append(out, Entry{
+			Key: line.Key,
+			Decision: classify.Decision{
+				Class: classify.Veiled,
+				Spans: []handle.Span{{Start: 0, End: len(line.Value), Ref: ref}},
+				Shape: shape.Of(line.Value),
+				Rule:  "npmrc-auth",
+			},
+			Projected: npmrc.Marker(ref),
+			Refs:      []string{ref},
+			Line:      i + 1,
+		})
+	}
+	return out
 }
 
 // DuplicateRefs returns any reference that two different variables would claim.

@@ -103,6 +103,25 @@ The shape is not the value, but it is not nothing. A 4 character numeric PIN has
 that describes a very small set. Do not put a low entropy secret in the store and expect the
 shape comment to hide it. `run` will refuse to filter it anyway. See section 2.3.
 
+### 2.7 A credential in a file that is not `.env` or `.npmrc`
+
+secretveil rewrites two kinds of file. Every other credential file on disk keeps its
+plaintext value, and an agent that reads files reads those too.
+
+A `.netrc` cannot be fixed at all. curl, git and ftp read it literally and expand no
+variable, so there is no text that could stand in for the password. A `.yarnrc.yml` does
+expand `${VAR}`, but it is YAML and a rewrite would need a parser that gives the file back
+byte for byte. A `.pypirc`, a `.pgpass`, a `.git-credentials`, a Docker `config.json`, an
+`aws/credentials`, an `.envrc` and a `terraform.tfvars` are all in the same position.
+
+`secretveil doctor` reads a short list of these names, reports the file and the line, and
+says plainly that it cannot protect them. It never reports a clean project on the strength of
+a file it did not open. That check exists because an earlier build ended its report with
+"nothing is at risk" while an npm token sat in `.npmrc` in the same directory.
+
+The list is a list of known names, not a search. A credential in a file this list does not
+name is not found and is not reported.
+
 ---
 
 ## 3. What secretveil does stop
@@ -112,6 +131,13 @@ shape comment to hide it. `run` will refuse to filter it anyway. See section 2.3
 This is the whole point. An AI tool that reads `.env` gets a handle. There is no
 integration, no allow list of tools, and nothing to keep up to date, because there is no
 value in the file to read. A tool released tomorrow is covered on the day it ships.
+
+An `.npmrc` gets a `${SV_NPMRC_...}` variable in place of the registry token, for the same
+reason and with the same result. It cannot hold a handle, because npm reads the file itself
+and would send the handle to the registry. The measurement behind this is D7 in
+[`decisions.md`](decisions.md). An `.npmrc` line is rewritten only when npm and this tool
+read the value the same way, and a line that fails that test is reported under section 2.7
+instead.
 
 ### 3.2 A secret in the output of a build
 
@@ -154,9 +180,10 @@ where a file can hold it needs a human caller.**
 
 ### 3.6 A file outside the project
 
-secretveil never follows a symbolic link named `.env`. A link can point anywhere on the
-machine, and following one would let `init` read a file outside the project and write a
-rewritten copy inside it. Links are reported and skipped. This is case 4.
+secretveil never follows a symbolic link. A link can point anywhere on the machine, and
+following one would let `init` read a file outside the project and write a rewritten copy
+inside it. Links are reported and skipped. This is case 4. The same rule holds for the
+`.npmrc` files and for the doctor check in section 2.7, which read no link either.
 
 ---
 

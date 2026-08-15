@@ -149,17 +149,22 @@ var rules = []rule{
 	},
 }
 
-// Scan walks a tree and returns every credential file that is not covered.
+// Scan walks a tree and returns every credential that is not covered.
 //
 // skipDir names a directory to walk past. covered reports whether the migration
-// already puts a reference into a path, and a covered path is never reported
-// here. That keeps one file from being named by two different checks once the
-// migration learns a new format.
+// already handles one line of one file, and a covered line is never reported
+// here. That keeps one line from being named by two different checks.
+//
+// The test is per line and not per file on purpose. The migration rewrites an
+// .npmrc line only when npm and this tool would read the value the same way, so
+// one file can hold a line that is covered and a line that is not. A file test
+// would hide the second kind, which is the very fault this package exists to
+// stop.
 //
 // A symbolic link is never followed and never read, for the same reason the
 // migration never follows one: a file inside the project can point at any file
 // on the machine.
-func Scan(root string, skipDir func(name string) bool, covered func(path string) bool) ([]Finding, error) {
+func Scan(root string, skipDir func(name string) bool, covered func(path string, line int) bool) ([]Finding, error) {
 	var out []Finding
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, werr error) error {
@@ -179,9 +184,6 @@ func Scan(root string, skipDir func(name string) bool, covered func(path string)
 		if !ok {
 			return nil
 		}
-		if covered != nil && covered(path) {
-			return nil
-		}
 		info, err := d.Info()
 		if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileSize {
 			return nil
@@ -190,7 +192,17 @@ func Scan(root string, skipDir func(name string) bool, covered func(path string)
 		if err != nil {
 			return nil
 		}
-		if lines := hits(body, r); len(lines) > 0 {
+		lines := hits(body, r)
+		if covered != nil {
+			keep := lines[:0]
+			for _, n := range lines {
+				if !covered(path, n) {
+					keep = append(keep, n)
+				}
+			}
+			lines = keep
+		}
+		if len(lines) > 0 {
 			out = append(out, Finding{Path: path, Kind: r.kind, Lines: lines, Advice: r.advice})
 		}
 		return nil

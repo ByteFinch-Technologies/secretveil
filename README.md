@@ -20,6 +20,22 @@ There is no plugin, no proxy and no integration with any AI tool. There is nothi
 integrate with, because the file on disk has no secret in it. Every AI tool is covered,
 including one released after this was written.
 
+An `.npmrc` is covered too. It cannot hold a handle, because npm reads the file itself and
+would send the handle to the registry, so it holds a variable that npm expands instead:
+
+```
+# before
+//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B
+
+# after
+//registry.npmjs.org/:_authToken=${SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN}
+```
+
+`secretveil run -- npm install` sets that variable and npm authenticates as it always did.
+Without `secretveil run` the variable is unset, npm sends the literal text, and the registry
+refuses it. Nothing leaks either way. The reasoning is in
+[`docs/decisions.md`](docs/decisions.md), D7.
+
 ---
 
 ## Read this first: what it does NOT do
@@ -49,6 +65,13 @@ worse than no tool, because you plan around a protection that is not there.
 5. **The agent still learns the shape.** The comment says the length, the character set and
    the entropy. That is deliberate, so the agent writes correct code against the variable.
    It is not nothing. Do not store a low entropy secret and expect the comment to hide it.
+
+6. **It rewrites `.env` and `.npmrc`, and no other credential file.** A `.netrc` cannot be
+   fixed at all, because curl, git and ftp read it literally and expand no variable. A
+   `.yarnrc.yml`, a `.pypirc`, an `aws/credentials` and their relatives are not rewritten
+   either. `secretveil doctor` finds these files, names the line, and says plainly that it
+   cannot protect them. It never reports a clean project on the strength of files it did not
+   open.
 
 The full reasoning, and what the tool does stop, is in [`docs/threat-model.md`](docs/threat-model.md).
 
@@ -114,6 +137,22 @@ Nothing in your application changes. dotenv, Vite and Next.js all give a variabl
 environment priority over the same variable in a `.env` file, so your framework loads the
 real value exactly the way it always did. The measurement is recorded as D4 in
 [`docs/decisions.md`](docs/decisions.md).
+
+### Node projects with a private registry
+
+`init` reads every `.npmrc` under the project, not only the one at the top, so a workspace
+gets the same treatment as the root. Put `secretveil run --` in front of any command that
+talks to the registry:
+
+```sh
+secretveil run -- npm install
+secretveil run -- npm publish
+```
+
+Only a registry credential is rewritten: `_authToken`, `_auth` and `_password`. A registry
+address, a scope mapping and every other setting stay exactly as they are, because npm has to
+read them. A value in quotes is left alone as well, because npm and this tool do not agree on
+what a quoted value means, and a wrong guess would put the wrong bytes in your file.
 
 ### Every command
 
