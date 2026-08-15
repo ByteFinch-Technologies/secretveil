@@ -102,3 +102,23 @@ is reduced to one. It still asserts that no needle reaches the output.
 corpus, and `go test ./...` did not show it, because that command runs a fuzz target only
 against the few inputs in `testdata`. Both faults were in the targets, not in the filter. CI
 now runs every fuzz target for a fixed number of cases on each change.
+
+---
+
+## D6. The cold start of `run` is 17 ms, and the keyring is not the cost
+
+**Date:** 2026-08-15
+
+**Measurement.** A project with two secrets on macOS on arm64, 25 runs, median. `/bin/echo x`
+alone takes 1.8 ms. `secretveil run --quiet -- /bin/echo x` takes 19.1 ms through the
+keychain, so the cost of the tool itself is 17.3 ms. The same project opened with
+`SECRETVEIL_IDENTITY` instead of the keychain takes 20.1 ms, which is the same number inside
+the error of the measurement. The binary alone, through `secretveil version`, takes 3.6 ms.
+
+**Effect.** The gate is 50 ms and the tool uses a third of it. The keyring read is not the
+part to optimise, and neither is the age file. A later change that adds a network call or a
+second process to the start of `run` will show up here at once.
+
+**A trap for the next measurement.** The first attempt reported 97 ms. The keychain entry of
+that old fixture had been deleted, so every run was taking an error path. Check the exit code
+of the command you are timing.
