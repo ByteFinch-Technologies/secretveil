@@ -79,6 +79,19 @@ The full reasoning, and what the tool does stop, is in [`docs/threat-model.md`](
 go install github.com/ByteFinch-Technologies/secretveil/cmd/secretveil@latest
 ```
 
+**While this repository is private, that line fails on its own.** The public checksum database
+cannot read a private repository, so the command stops with a 404 from `sum.golang.org`. Tell the
+Go tool to skip the public database for this path:
+
+```sh
+export GOPRIVATE='github.com/ByteFinch-Technologies/*'
+go install github.com/ByteFinch-Technologies/secretveil/cmd/secretveil@latest
+```
+
+You also need git access to the repository. A binary installed this way reports its version as
+`dev`, because the version is stamped at release time. Delete this note when the repository
+becomes public.
+
 ## Use it
 
 ```sh
