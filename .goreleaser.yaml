@@ -1,0 +1,102 @@
+# How a release is built.
+#
+# Every binary is built by CI from a tagged commit. Nothing is built on a
+# workstation and uploaded by hand, because a person cannot prove what a file
+# on their machine was made from.
+#
+# Try it before you tag:
+#
+#	goreleaser release --snapshot --clean
+version: 2
+
+project_name: secretveil
+
+before:
+  hooks:
+    - go mod download
+    - go mod verify
+
+builds:
+  - id: secretveil
+    main: ./cmd/secretveil
+    binary: secretveil
+    env:
+      # CGO is off, so the binary has no library to install and one machine can
+      # build every platform. The keyring is reached through a command line
+      # program, "security" on macOS and "secret-tool" on Linux, and not
+      # through a C library. That is what makes this possible.
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      # -trimpath takes the path of the build machine out of the binary. Two
+      # builds of the same commit then give the same bytes.
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/ByteFinch-Technologies/secretveil/internal/cli.Version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: secretveil
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - SECURITY.md
+      - LICENSE
+      - src: docs/threat-model.md
+        dst: docs/threat-model.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# The checksum file is signed with cosign in keyless mode. There is no private
+# key to keep safe and no key to lose. The signature records which workflow, on
+# which commit, made the file, and anyone can check it:
+#
+#	cosign verify-blob checksums.txt \
+#	  --certificate checksums.txt.pem \
+#	  --signature checksums.txt.sig \
+#	  --certificate-identity-regexp 'https://github\.com/ByteFinch-Technologies/secretveil/' \
+#	  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    go install github.com/ByteFinch-Technologies/secretveil/cmd/secretveil@{{ .Tag }}
+    ```
+
+    Read [the threat model](https://github.com/ByteFinch-Technologies/secretveil/blob/{{ .Tag }}/docs/threat-model.md)
+    before you install. Section 2 says what this tool does not stop.
