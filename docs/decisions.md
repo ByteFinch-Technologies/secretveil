@@ -201,3 +201,38 @@ file: `slug` cut the name at the last dot, so `.env.local` and `.env.development
 old name to the new one, which cannot hold one old name that became two new names, so `init`
 reported one rename when it had made two. Both are fixed. `Renamed` is now a list that names
 the file as well.
+
+## D9. Provenance needs a public repository, so the flag is conditional
+
+**Date:** 2026-08-16
+
+**Measurement.** A dry run made every npm package from the four cross compiled binaries with
+no registry involved. `node npm/build.mjs 0.1.0` passed its own platform check. `npm pack`
+made five tarballs. The `darwin-arm64` tarball and the main tarball, installed together into
+an empty project, gave a working `node_modules/.bin/secretveil`, and `secretveil version`
+printed `0.1.0`. The registry names `secretveil` and `@secretveil/darwin-arm64` both answer
+404, so both are free.
+
+**The obstacle.** The publish step asked for `--provenance` on every package. npm refuses a
+provenance statement from a private source repository and answers "Only public source
+repositories are supported when publishing with provenance". GitHub stopped supporting it in
+July 2023. This repository is private today, so the step would have failed after some
+platform packages were already on the registry, which is worse than not asking for
+provenance at all.
+
+**Decision.** The workflow reads `github.event.repository.private` and adds `--provenance`
+only when the repository is public. A private repository still publishes, and the log says
+why the packages carry no provenance.
+
+**What this does not decide.** Whether the repository becomes public. That is a choice about
+the project, not about the release, and it has a second effect: the `repository` link in
+every published package points at a page that answers 404 to everyone who is not a member.
+
+**A second path.** npm trusted publishing, generally available since July 2025, lets npm
+trust a named workflow through OIDC. There is then no token to make, to store or to rotate,
+and provenance is written with no flag. It is configured per package and needs the package to
+exist, so the first publish still uses an Automation token.
+
+**A trap worth writing down.** To npm a path of two parts is the name of a GitHub repository.
+`npm publish npm/secretveil` reaches for `github.com/npm/secretveil` and fails with a git
+permission error that names neither npm nor this project. Every command keeps the `./`.
