@@ -103,9 +103,9 @@ func TestARenamedNpmrcReferenceKeepsItsPrefix(t *testing.T) {
 	if len(res.Renamed) != 1 {
 		t.Fatalf("want one rename, got %v", res.Renamed)
 	}
-	for _, name := range res.Renamed {
-		if !strings.HasPrefix(name, "npmrc_") {
-			t.Fatalf("the new name %q lost the npmrc_ prefix", name)
+	for _, r := range res.Renamed {
+		if !strings.HasPrefix(r.To, "npmrc_") {
+			t.Fatalf("the new name %q lost the npmrc_ prefix", r.To)
 		}
 	}
 	for _, p := range []string{"packages/api/.npmrc", "packages/web/.npmrc"} {
