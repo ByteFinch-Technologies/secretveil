@@ -111,9 +111,25 @@ type Result struct {
 	// These are not a failure of the migration. They are a finding, and the
 	// human must deal with each one.
 	Leftover []Leftover `json:"leftover,omitempty"`
-	// Renamed maps an original reference to the name it got, when two
-	// variables in different files wanted the same name.
-	Renamed map[string]string `json:"renamed,omitempty"`
+	// Renamed lists every reference that had to take a new name, because two
+	// variables in different files wanted the same one.
+	//
+	// This is a list and not a map from the old name to the new one. Three
+	// files may hold the same key, and then one old name becomes two new
+	// names. A map lost the first of them, so init told the developer about
+	// one rename when it had made two.
+	Renamed []Rename `json:"renamed,omitempty"`
+}
+
+// Rename is one reference that had to take a new name.
+type Rename struct {
+	// From is the name the reference would have had.
+	From string `json:"from"`
+	// To is the name it took.
+	To string `json:"to"`
+	// File is the file that holds it, relative to the root. It is the reason
+	// the name changed, so the report has to show it.
+	File string `json:"file"`
 }
 
 // undo is one step of the rollback.
@@ -369,7 +385,7 @@ func rewriteDotenv(src []byte, f FilePlan) ([]byte, bool, error) {
 // A reference that two variables claim with the same value is not a collision.
 // One name for one value is correct, and it is what a developer expects when
 // the same database password appears in two services.
-func resolveCollisions(p *Plan, root string) map[string]string {
+func resolveCollisions(p *Plan, root string) []Rename {
 	type owner struct {
 		file  int
 		entry int
@@ -405,7 +421,7 @@ func resolveCollisions(p *Plan, root string) map[string]string {
 	for ref := range owners {
 		taken[ref] = true
 	}
-	renamed := map[string]string{}
+	var renamed []Rename
 
 	refs := make([]string, 0, len(owners))
 	for ref := range owners {
@@ -431,13 +447,15 @@ func resolveCollisions(p *Plan, root string) map[string]string {
 		// The first owner keeps the plain name. Every other owner gets the
 		// name of its file in front, so the new name still reads well.
 		for _, o := range list[1:] {
-			base := renameRef(p.Files[o.file].kind(), ref, slug(rel(root, p.Files[o.file].Path)))
+			kind := p.Files[o.file].kind()
+			where := rel(root, p.Files[o.file].Path)
+			base := renameRef(kind, ref, fileTag(kind, where))
 			name := base
 			for n := 2; taken[name]; n++ {
 				name = fmt.Sprintf("%s_%d", base, n)
 			}
 			taken[name] = true
-			renamed[ref] = name
+			renamed = append(renamed, Rename{From: ref, To: name, File: where})
 			entry := &p.Files[o.file].Entries[o.entry]
 			entry.Decision.Spans[o.span].Ref = name
 			refreshEntry(p.Files[o.file].kind(), entry, o.full)
@@ -481,9 +499,34 @@ func refreshEntry(kind FileKind, e *Entry, value string) {
 	e.Projected = classify.Project(value, e.Decision)
 }
 
-// slug turns a path into a name that a reference can hold.
+// fileTag builds the part of a new reference name that says which file the
+// value came from.
+//
+// A .env file keeps its whole name. The word after "env." is the name of the
+// environment, and it is the most useful word in the file name. An earlier
+// build cut the name at the last dot, so ".env.local" and ".env.development"
+// both became "env". Two files that held the same key then had to be told
+// apart by a number, and the developer read "env_api_key" and "env_api_key_2"
+// with no way to know which file was which.
+//
+// An .npmrc file keeps only its directory. Every .npmrc has the same base
+// name, so that name says nothing, and the reference already starts with
+// "npmrc_". An .npmrc at the top of the project has no directory to name, and
+// takes the word "root" instead.
+func fileTag(kind FileKind, rel string) string {
+	if kind != KindNpmrc {
+		return slug(rel)
+	}
+	if tag := slug(filepath.Dir(rel)); tag != "" {
+		return tag
+	}
+	return "root"
+}
+
+// slug turns a path into a name that a reference can hold. It changes the
+// characters and nothing else. The caller decides which part of the path to
+// pass in.
 func slug(path string) string {
-	path = strings.TrimSuffix(path, filepath.Ext(path))
 	var b strings.Builder
 	last := byte('_')
 	for i := 0; i < len(path); i++ {
