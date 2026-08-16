@@ -15,6 +15,7 @@ import (
 	"github.com/ByteFinch-Technologies/secretveil/internal/migrate"
 	"github.com/ByteFinch-Technologies/secretveil/internal/policy"
 	"github.com/ByteFinch-Technologies/secretveil/internal/project"
+	"github.com/ByteFinch-Technologies/secretveil/internal/runtime"
 	"github.com/ByteFinch-Technologies/secretveil/internal/store/agefile"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -199,8 +200,8 @@ func reportInit(out, errOut io.Writer, root string, res *migrate.Result, keptBac
 
 	if len(res.Renamed) > 0 {
 		fmt.Fprintf(out, "\n%d names collided, so init renamed them:\n", len(res.Renamed))
-		for from, to := range res.Renamed {
-			fmt.Fprintf(out, "  %s -> %s\n", from, to)
+		for _, r := range res.Renamed {
+			fmt.Fprintf(out, "  %s -> %s  (%s)\n", r.From, r.To, r.File)
 		}
 	}
 
@@ -223,7 +224,21 @@ func reportInit(out, errOut io.Writer, root string, res *migrate.Result, keptBac
 	}
 
 	fmt.Fprintln(out, "\nNext, put secretveil in front of the command that needs the values:")
-	fmt.Fprintln(out, "  secretveil run -- npm run dev")
+
+	// A project that keeps a value outside the two default names needs a longer
+	// command, and this is the moment the developer will read it. The file was
+	// rewritten a second ago, so a plain "run" here would send them away with a
+	// command that does not resolve what they just migrated.
+	extra, err := runtime.Unread(root)
+	if err != nil || len(extra) == 0 {
+		fmt.Fprintln(out, "  secretveil run -- npm run dev")
+		return
+	}
+	fmt.Fprintln(out, "  "+runtime.RunLine(runtime.LoadOrder(root, extra)))
+	fmt.Fprintf(out, "\nrun reads %s on its own. Name the rest, as above,\n",
+		strings.Join(runtime.DefaultFiles, " and "))
+	fmt.Fprintln(out, "because a name such as .env.production means one thing in Next.js and")
+	fmt.Fprintln(out, "another thing in Vite. secretveil does not guess which one you want.")
 }
 
 // ctxOrBackground is here so a command with no context still works in a test.
