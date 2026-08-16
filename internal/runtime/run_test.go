@@ -309,3 +309,53 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// TestAPseudoTerminalKeepsTheLastLine guards the drain. The child writes many
+// lines and exits at once, so bytes are still in the pseudo terminal when
+// cmd.Wait returns. A close before the copy finished threw those bytes away,
+// and the last lines of a program went missing with nothing to say they had.
+//
+// The count is high enough to fill the buffer of the pseudo terminal more than
+// once, so a partial copy cannot pass by luck.
+func TestAPseudoTerminalKeepsTheLastLine(t *testing.T) {
+	const lines = 500
+	out := newSafeBuffer()
+	cfg := Config{
+		Args: []string{"/bin/sh", "-c",
+			`i=1; while [ $i -le ` + itoa(lines) + ` ]; do echo "line $i of a program that stops"; i=$((i+1)); done`},
+		Env:      os.Environ(),
+		Values:   map[string]string{"api_key": testSecret},
+		Stdin:    strings.NewReader(""),
+		Stdout:   out,
+		Stderr:   newSafeBuffer(),
+		ForcePTY: true,
+	}
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("the runtime failed: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("the child exited with %d", res.ExitCode)
+	}
+	got := out.String()
+	// The last line is the one a close-first drain loses.
+	last := "line " + itoa(lines) + " of a program that stops"
+	if !strings.Contains(got, last) {
+		t.Fatalf("the last line is missing. The output ends with %q",
+			tail(got, 120))
+	}
+	// Every line has to be there, not only the last one.
+	for i := 1; i <= lines; i++ {
+		if !strings.Contains(got, "line "+itoa(i)+" of a program that stops") {
+			t.Fatalf("line %d is missing from an output of %d bytes", i, len(got))
+		}
+	}
+}
+
+// tail returns the last n bytes of s, for a message that has to stay short.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
