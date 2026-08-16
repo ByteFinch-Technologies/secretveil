@@ -13,10 +13,12 @@
 // The result is npm/platforms/, which is not checked in.
 //
 // Then publish, the platform packages first, because the main package depends
-// on them:
+// on them. Keep the "./". To npm a path of two parts is the name of a GitHub
+// repository, so "npm publish npm/secretveil" reaches for
+// github.com/npm/secretveil and fails with a git error that does not say why:
 //
-//	for d in npm/platforms/*; do npm publish "$d" --access public --provenance; done
-//	npm publish npm/secretveil --access public --provenance
+//	for d in npm/platforms/*; do npm publish "./$d" --access public --provenance; done
+//	npm publish ./npm/secretveil --access public --provenance
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
