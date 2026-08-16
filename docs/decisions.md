@@ -236,3 +236,36 @@ exist, so the first publish still uses an Automation token.
 **A trap worth writing down.** To npm a path of two parts is the name of a GitHub repository.
 `npm publish npm/secretveil` reaches for `github.com/npm/secretveil` and fails with a git
 permission error that names neither npm nor this project. Every command keeps the `./`.
+
+## D10. `run` waits for the pseudo terminal to drain before it closes it
+
+**Date:** 2026-08-16
+
+**Measurement.** `TestAPseudoTerminalRunFiltersTheOutput` failed on `ubuntu-latest` under
+`-race` with `the placeholder is missing from ""`. The child had written two lines and the
+capture held nothing at all. The same test passes on macOS and passed on Linux on the runs
+before it, so the fault looked like chance.
+
+**Cause.** `runPTY` closed the pseudo terminal as soon as `cmd.Wait` returned. `cmd.Wait`
+returns when the child is reaped, not when its output is read, so the copy that reads the
+pseudo terminal can still have bytes to take, or can have had no turn to run at all. The
+close ended that read, and the bytes went nowhere. `-race` makes a goroutine slower to be
+scheduled, which is why Linux under `-race` showed it first.
+
+**What was at stake.** This is not a test fault. A person who runs `secretveil run -- make`
+could lose the last lines of the build, which are the lines that say whether it worked, and
+nothing anywhere would say a line was dropped.
+
+**Decision.** `drainPTY` waits for the copy to reach the end of the stream, then closes. A
+read of the pseudo terminal reports the end as soon as the last program closes the other end,
+so the normal wait is microseconds. A child that leaves a program behind holding that end
+open would never report the end, so the wait is bounded by `ptyDrainGrace`, two seconds, and
+the close then ends the blocked read.
+
+**The other path was already right.** `runPipes` hands `cmd.Stdout` an `io.Writer` and not a
+file, so `os/exec` makes the pipe and its own copy, and `cmd.Wait` waits for that copy. Only
+the pseudo terminal path owned the copy, and only it had to own the order.
+
+**Guard.** `TestAPseudoTerminalKeepsTheLastLine` runs a child that writes 500 lines and stops.
+Every line has to arrive. Note that this test passes on macOS with the old order as well, so
+Linux is where it earns its place.
