@@ -18,6 +18,7 @@ import (
 	"github.com/ByteFinch-Technologies/secretveil/internal/npmrc"
 	"github.com/ByteFinch-Technologies/secretveil/internal/policy"
 	"github.com/ByteFinch-Technologies/secretveil/internal/project"
+	"github.com/ByteFinch-Technologies/secretveil/internal/runtime"
 	"github.com/ByteFinch-Technologies/secretveil/internal/store/agefile"
 	"github.com/spf13/cobra"
 )
@@ -146,6 +147,7 @@ func runChecks(ctx context.Context, root string) []finding {
 
 	add(checkPlaintext(plan))
 	add(checkUncovered(root, plan))
+	add(checkUnread(root))
 	used := handlesInFiles(root)
 	add(checkDangling(ctx, st, used))
 	add(checkOrphans(refs, used))
@@ -225,6 +227,39 @@ func checkPlaintext(plan *migrate.Plan) finding {
 // The level is a warning and not a fault, so the exit code stays 0. A project
 // can hold a .netrc that nothing can fix, and a check that fails forever is a
 // check that developers learn to ignore.
+// checkUnread reports a .env file that holds a handle but that "run" does not
+// read on its own.
+//
+// This check exists because the report was wrong without it. A project with a
+// handle in .env.development passed every other check, because the value was in
+// the store and the file was rewritten. Nothing asked whether anything would
+// ever read that file. The developer got "Every check passed" and a program
+// that received the text "sv://stripe_dev_key" as its key.
+//
+// The advice is a whole command line, and not a rule to work out. The load
+// order of these files is the part a developer gets wrong.
+func checkUnread(root string) finding {
+	extra, err := runtime.Unread(root)
+	if err != nil {
+		return finding{levelNote, "the .env files could not be listed: " + err.Error(), nil}
+	}
+	if len(extra) == 0 {
+		return finding{levelOK, "run reads every .env file that holds a handle", nil}
+	}
+
+	detail := make([]string, 0, len(extra)+3)
+	for _, name := range extra {
+		detail = append(detail, name+": init rewrote this file, but run does not read it")
+	}
+	detail = append(detail,
+		"Your framework reads the file itself and gives the program the handle text.",
+		"Name the files you want, in load order. A later file wins over an earlier one:",
+		"  "+runtime.RunLine(runtime.LoadOrder(root, extra)))
+	return finding{levelWarn,
+		fmt.Sprintf("%d .env file(s) hold a handle that run does not resolve", len(extra)),
+		detail}
+}
+
 func checkUncovered(root string, plan *migrate.Plan) finding {
 	found, err := coverage.Scan(root, migrate.SkipDir, plannedLine(plan))
 	if err != nil {
