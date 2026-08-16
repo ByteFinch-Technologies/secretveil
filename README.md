@@ -98,22 +98,37 @@ The full reasoning, and what the tool does stop, is in [`docs/threat-model.md`](
 
 ## Install
 
+Run it once, without an install:
+
+```sh
+npx secretveil doctor
+```
+
+Install it for one project, so that everybody on the team gets the same version:
+
+```sh
+npm install --save-dev secretveil
+```
+
+Install it for every project on the machine:
+
+```sh
+npm install --global secretveil
+```
+
+The npm package holds no binary. It names four platform packages, and npm installs only the
+one that matches the machine: macOS and Linux, on Intel and on ARM. Windows is planned for
+v0.3. There is no build step, and no Go toolchain is needed.
+
+A Go developer may install from source instead:
+
 ```sh
 go install github.com/ByteFinch-Technologies/secretveil/cmd/secretveil@latest
 ```
 
-**While this repository is private, that line fails on its own.** The public checksum database
-cannot read a private repository, so the command stops with a 404 from `sum.golang.org`. Tell the
-Go tool to skip the public database for this path:
-
-```sh
-export GOPRIVATE='github.com/ByteFinch-Technologies/*'
-go install github.com/ByteFinch-Technologies/secretveil/cmd/secretveil@latest
-```
-
-You also need git access to the repository. A binary installed this way reports its version as
-`dev`, because the version is stamped at release time. Delete this note when the repository
-becomes public.
+Each release also carries a signed archive for each platform, with a checksum and a bill of
+materials. [`docs/install.md`](docs/install.md) has the archive, the signature check, and
+what to do when the install goes wrong.
 
 ## Use it
 
@@ -273,6 +288,16 @@ output filter.
 
 ## Documentation
 
+Everything is in [`docs/`](docs/README.md).
+
+- [`docs/getting-started.md`](docs/getting-started.md) — the whole thing working, in five
+  minutes.
+- [`docs/install.md`](docs/install.md) — npm, Go, a signed archive, and what to do when an
+  install goes wrong.
+- [`docs/commands.md`](docs/commands.md) — every command and every flag.
+- [`docs/ci.md`](docs/ci.md) — the same project on a build server, with no keychain and no
+  human.
+- [`docs/faq.md`](docs/faq.md) — the questions people ask on day two.
 - [`docs/threat-model.md`](docs/threat-model.md) — what is stopped, what is not, and why.
 - [`docs/decisions.md`](docs/decisions.md) — each decision that changed the plan, with the
   measurement that caused it.
