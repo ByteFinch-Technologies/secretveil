@@ -162,3 +162,42 @@ need a round-trip YAML parser. `doctor` reports both rather than rewriting them.
 "option is protected", so the measurement above used a key npm does not protect. The end to
 end check ran `secretveil run -- npm config get my-custom-key` against a marker and saw the
 output filter replace the expanded token with its reference.
+
+---
+
+## D8. `init` rewrites every `.env` file, but `run` reads two of them
+
+**Date:** 2026-08-16
+
+**Measurement.** A project held `API_KEY` in `.env` and `STRIPE_DEV_KEY` in `.env.development`.
+After `secretveil init`, both files held a handle. `secretveil run -- node ...` reported
+`1 secret(s) from .env`, and a loader that read `.env.development` itself gave the program the
+string `sv://stripe_dev_key` as the value of `STRIPE_DEV_KEY`. `secretveil doctor` on that same
+project printed `Every check passed.`
+
+**Reason for the two lists.** `IsSecretFile` accepts `.env` and every name that starts with
+`.env.`, because a plaintext secret in `.env.production` is a plaintext secret and `init` has to
+move it. `runtime.DefaultFiles` holds only `.env` and `.env.local`, because those two names mean
+the same thing in every framework. `.env.production` does not: Next.js loads it when `NODE_ENV`
+is `production`, and Vite loads it when the mode is `production`, which is a different question.
+A tool that guessed would put the wrong value in a program that talks to a live system.
+
+**Decision.** Keep both lists as they are. The default is right, and the silence about it was
+the fault.
+
+**Effect.** `doctor` gained a check. A `.env` file that holds a handle and that the default load
+order does not read is named, with the whole `--env-file` command to fix it, in load order.
+`init` prints that same command instead of the short one when it rewrote such a file. Neither
+command guesses which file a framework wants. Both say what was not read.
+
+**Why the advice is a whole command line.** The load order is the part a developer gets wrong. A
+later file wins over an earlier one, so `.env` goes first and `.env.local` goes last. A rule to
+work out is a rule to get wrong, so `runtime.LoadOrder` works it out and `runtime.RunLine`
+prints it.
+
+**Two faults found in the same area.** The reference that a rename produced did not name its
+file: `slug` cut the name at the last dot, so `.env.local` and `.env.development` both became
+`env`, and the second one had to take the number `2`. And `Result.Renamed` was a map from the
+old name to the new one, which cannot hold one old name that became two new names, so `init`
+reported one rename when it had made two. Both are fixed. `Renamed` is now a list that names
+the file as well.

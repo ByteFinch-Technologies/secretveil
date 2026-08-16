@@ -138,6 +138,36 @@ environment priority over the same variable in a `.env` file, so your framework 
 real value exactly the way it always did. The measurement is recorded as D4 in
 [`docs/decisions.md`](docs/decisions.md).
 
+### More than one `.env` file
+
+`init` moves the secrets out of every `.env` file it finds, so `.env.development`,
+`.env.staging` and `.env.production` all get handles too.
+
+`run` reads two of those files on its own: `.env` and `.env.local`. Those two names mean the
+same thing in every framework. `.env.production` does not, because Next.js loads it for
+`NODE_ENV=production` and Vite loads it for mode `production`, which is a different question.
+secretveil does not guess. Name the files you want, in load order:
+
+```sh
+secretveil run --env-file .env --env-file .env.development --env-file .env.local -- npm run dev
+```
+
+A later file wins over an earlier one, which is the order every framework holds. Put `.env`
+first and `.env.local` last.
+
+You do not have to work this out. `init` prints the whole command when it rewrote a file
+outside the two default names, and `doctor` names any such file and prints the same command:
+
+```
+!  1 .env file(s) hold a handle that run does not resolve
+   .env.development: init rewrote this file, but run does not read it
+   Your framework reads the file itself and gives the program the handle text.
+   Name the files you want, in load order. A later file wins over an earlier one:
+     secretveil run --env-file .env --env-file .env.development -- <command>
+```
+
+The decision is recorded as D8 in [`docs/decisions.md`](docs/decisions.md).
+
 ### Node projects with a private registry
 
 `init` reads every `.npmrc` under the project, not only the one at the top, so a workspace
