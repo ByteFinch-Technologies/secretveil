@@ -192,9 +192,7 @@ func runPTY(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher,
 	go func() { _, _ = io.Copy(ptmx, stdin) }()
 
 	waitErr := cmd.Wait()
-	// Closing our end of the pseudo terminal ends the output copy.
-	_ = ptmx.Close()
-	wg.Wait()
+	drainPTY(ptmx, &wg)
 	stopTimer()
 	stopSignals()
 
@@ -205,6 +203,37 @@ func runPTY(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher,
 		return res, ctx.Err()
 	}
 	return res, closeErr
+}
+
+// ptyDrainGrace is how long the last bytes of a child have to arrive after the
+// child is gone. The copy normally ends in microseconds, because a read of the
+// pseudo terminal reports EIO as soon as the last program closes the other end.
+// The grace matters only when the child left a program behind that still holds
+// that end open, and then it is a bound on the wait and not a delay.
+const ptyDrainGrace = 2 * time.Second
+
+// drainPTY lets the output copy finish, then closes the pseudo terminal.
+//
+// The order is the point. cmd.Wait returns as soon as the child is reaped, and
+// the pseudo terminal can still hold bytes that the child wrote and that the
+// copy has not read. Closing first threw those bytes away, so the last lines of
+// a program could go missing with nothing to say they had. A busy machine lost
+// more of them than an idle one, which made the fault look like chance.
+func drainPTY(ptmx *os.File, wg *sync.WaitGroup) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// The copy reached the end of the stream. Nothing is left to read.
+	case <-time.After(ptyDrainGrace):
+		// Something still holds the other end open. Close ours, which ends the
+		// blocked read, and take the bytes that did arrive.
+	}
+	_ = ptmx.Close()
+	<-done
 }
 
 // startIdleFlush runs a timer that flushes each writer while the stream is
