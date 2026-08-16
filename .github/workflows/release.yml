@@ -129,13 +129,27 @@ jobs:
       # The platform packages go first. The main package depends on them, and a
       # developer who installs it before its binary exists gets an error
       # instead of a program.
+      #
+      # --provenance is added only when this repository is public. npm refuses
+      # a provenance statement from a private source repository and answers
+      # "Only public source repositories are supported when publishing with
+      # provenance", which fails the publish after some packages are already
+      # out. A release with no provenance is worth more than half a release.
       - name: publish
         if: steps.token.outputs.have == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PRIVATE: ${{ github.event.repository.private }}
         run: |
           set -e
+          if [ "$PRIVATE" = "true" ]; then
+            PROVENANCE=""
+            echo "This repository is private, so the packages carry no provenance."
+            echo "Make the repository public to get it. See npm/README.md."
+          else
+            PROVENANCE="--provenance"
+          fi
           for d in npm/platforms/*; do
-            npm publish "./$d" --access public --provenance
+            npm publish "./$d" --access public $PROVENANCE
           done
-          npm publish ./npm/secretveil --access public --provenance
+          npm publish ./npm/secretveil --access public $PROVENANCE
