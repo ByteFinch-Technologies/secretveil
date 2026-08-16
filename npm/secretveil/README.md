@@ -75,8 +75,15 @@ use it.
 
 ## Documentation
 
-Everything is in the
-[repository](https://github.com/ByteFinch-Technologies/secretveil): the command list, how a
-value is classified, where the secrets live, and how the caller is recognised.
+- [Getting started](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/getting-started.md)
+  — the whole thing working, in five minutes.
+- [Commands](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/commands.md)
+  — every command and every flag.
+- [CI](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/ci.md)
+  — the same project on a build server, with no keychain and no human.
+- [Questions](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/faq.md)
+  — the questions people ask on day two.
+- [Threat model](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/threat-model.md)
+  — what is stopped, what is not, and why.
 
-Apache 2.0.
+Apache 2.0. Made by [ByteFinch Technologies](https://bytefinch.dev).
