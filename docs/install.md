@@ -22,8 +22,9 @@ packages as `optionalDependencies`, and npm installs only the one that matches t
 | `@secretveil/linux-x64` | Linux, Intel or AMD |
 | `@secretveil/linux-arm64` | Linux, ARM |
 
-Each package is published from GitHub Actions with `--provenance`, so npm records which
-workflow built it, from which commit. The badge is on the npm page.
+Each package is published from GitHub Actions through npm trusted publishing, so npm records
+which workflow built it, from which commit, and no publish credential exists to be stolen.
+The provenance badge is on the npm page.
 
 ### Windows
 

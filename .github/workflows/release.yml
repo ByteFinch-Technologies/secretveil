@@ -88,68 +88,50 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # --provenance asks GitHub for a short lived identity token, the same way
-      # cosign does.
+      # npm asks GitHub for a short lived identity token and trades it for the
+      # right to publish. No secret is stored anywhere. The same token signs
+      # the provenance statement, so cosign and npm prove the same thing about
+      # the same commit.
       id-token: write
     steps:
       - uses: actions/checkout@v4
 
-      # A job level "if" cannot read the secrets context, so the question is
-      # asked in a step instead. A missing token skips the publish and says so.
-      # It does not fail the release, because the binaries are already out.
-      - name: is there an npm token
-        id: token
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "NPM_TOKEN is not set, so nothing is published to npm."
-            echo "See npm/README.md for what has to exist first."
-          else
-            echo "have=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/setup-node@v4
-        if: steps.token.outputs.have == 'true'
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      # Trusted publishing needs npm 11.5.1 or later. Node 24 ships a new
+      # enough npm today, but the bundled version is not a promise. An old npm
+      # does not report that it cannot do a trusted publish. It asks for a
+      # token instead and the publish fails with a 404, which reads like a
+      # missing package. This one line removes that whole class of confusion.
+      - name: get an npm that knows trusted publishing
+        run: npm install --global npm@latest
 
       - uses: actions/download-artifact@v4
-        if: steps.token.outputs.have == 'true'
         with:
           name: dist
           path: dist
 
       - name: make the packages
-        if: steps.token.outputs.have == 'true'
         run: node npm/build.mjs "${GITHUB_REF_NAME#v}"
 
       # The platform packages go first. The main package depends on them, and a
       # developer who installs it before its binary exists gets an error
       # instead of a program.
       #
-      # --provenance is added only when this repository is public. npm refuses
-      # a provenance statement from a private source repository and answers
-      # "Only public source repositories are supported when publishing with
-      # provenance", which fails the publish after some packages are already
-      # out. A release with no provenance is worth more than half a release.
+      # There is no NODE_AUTH_TOKEN and no --provenance flag. A trusted publish
+      # writes the provenance statement by itself, and it works only when this
+      # repository and this file name match the trusted publisher that npm
+      # holds for the package. Each of the five packages carries its own
+      # configuration. A new package will not publish until it has one.
+      # See npm/README.md.
       - name: publish
-        if: steps.token.outputs.have == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PRIVATE: ${{ github.event.repository.private }}
         run: |
           set -e
-          if [ "$PRIVATE" = "true" ]; then
-            PROVENANCE=""
-            echo "This repository is private, so the packages carry no provenance."
-            echo "Make the repository public to get it. See npm/README.md."
-          else
-            PROVENANCE="--provenance"
-          fi
           for d in npm/platforms/*; do
-            npm publish "./$d" --access public $PROVENANCE
+            npm publish "./$d" --access public
           done
-          npm publish ./npm/secretveil --access public $PROVENANCE
+          npm publish ./npm/secretveil --access public

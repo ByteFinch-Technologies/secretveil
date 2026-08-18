@@ -17,8 +17,12 @@
 // repository, so "npm publish npm/secretveil" reaches for
 // github.com/npm/secretveil and fails with a git error that does not say why:
 //
-//	for d in npm/platforms/*; do npm publish "./$d" --access public --provenance; done
-//	npm publish ./npm/secretveil --access public --provenance
+//	for d in npm/platforms/*; do npm publish "./$d" --access public; done
+//	npm publish ./npm/secretveil --access public
+//
+// There is no --provenance flag. CI publishes through npm trusted publishing,
+// which writes the provenance statement by itself. A publish by hand gets no
+// provenance and is for recovery only.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
