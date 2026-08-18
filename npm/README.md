@@ -55,40 +55,62 @@ private one with "Only public source repositories are supported when publishing 
 provenance". The workflow therefore adds the flag only when the repository is public, and
 says in the log when it does not.
 
-## Before the first publish
+## The first publish is done
 
-Three things have to be true. Two of them are now done.
+v0.1.0 went to the registry on 2026-08-18. All five packages carry a SLSA provenance
+statement, and `npm install secretveil` on darwin/arm64 fetched the shim and its one platform
+package and printed `0.1.0`.
 
-1. **The `secretveil` npm organisation exists.** Done on 2026-08-16, on the free tier.
-   `@secretveil/...` is a scoped name, and a scope has to belong to an organisation or to a
-   user. The free tier holds any number of public packages.
-2. **The workflow can authenticate.** Open. This is the one step that is left, and it needs
-   a person, because npm asks for the second factor before it makes a token.
-   - For the **first** publish, make a **granular access token** at
-     <https://www.npmjs.com/settings/umer-bytefinch/tokens/new>. Give it write permission on
-     the `@secretveil` scope and on the `secretveil` package, and nothing else. Install it
-     with `gh secret set NPM_TOKEN --repo ByteFinch-Technologies/secretveil`, which reads
-     the value from standard input and puts it in no command line and in no shell history.
-     Read the lifetime that npm offers. npm limits a granular token that is made for
-     automation to a short life, so treat this token as one for the first publish and not as
-     one for the year.
-   - For **every publish after that**, use **trusted publishing**, which npm made generally
-     available in July 2025. npm trusts a named workflow in a named repository through OIDC,
-     so there is no token to make, to store or to rotate, and provenance is written with no
-     `--provenance` flag. Set it up per package at
-     `https://www.npmjs.com/package/<name>/access`, for all five packages. It needs the
-     package to exist, which is why the first publish still uses a token.
-   - Do not make a classic token. npm is withdrawing them. The account pages stop making
-     them in August 2026, and they stop working for a publish in January 2027. An earlier
-     version of this file asked for an "Automation" classic token. That advice is wrong now.
-3. **The repository is public.** Done on 2026-08-16, after a scan of every commit found no
-   credential and no business content. The packages therefore carry provenance, and the
-   `repository` link in each package points at a page that anyone can read.
+The section that follows is what the next release needs. Read "What the first publish taught
+us" below before you make a token, because two things cost time that do not have to cost it
+again.
 
-Until the token exists, the publish job in `.github/workflows/release.yml` is skipped. It
-checks for the token and says so in the log. Tag `v0.1.0` only after the token is in place.
-A tag that is spent on a release with no packages cannot be spent again, and the `dist`
-artifact of that run is kept for one day only.
+## What the next release needs
+
+1. **Authentication.** The token that did the first publish is a granular access token with a
+   short life, so it is probably dead by now. Do not make another one. Set up **trusted
+   publishing** instead, per package, at `https://www.npmjs.com/package/<name>/access`, for
+   all five packages. npm then trusts this repository and this workflow through OIDC. There
+   is no token to make, to store or to rotate, and provenance is written with no
+   `--provenance` flag.
+2. **Nothing else.** The organisation exists, the repository is public, and the workflow is
+   proven. Tag `vX.Y.Z` and the release runs.
+
+Do not make a classic token. npm is withdrawing them. The account pages stop making them in
+August 2026, and they stop working for a publish in January 2027.
+
+## What the first publish taught us
+
+**A token that authenticates can still be refused, and npm says 404.** The first attempt
+failed on the first package with
+`E404 Not Found - PUT https://registry.npmjs.org/@secretveil%2fdarwin-arm64`. That reads like
+a missing package, and it is not. npm answers an unauthorised write with 404 rather than 403,
+so that a stranger cannot learn which private packages exist. The token was valid, it had
+authenticated, and it did not carry write permission for the scope. A replacement token
+published all five with no other change.
+
+Two things this rules out, so nobody has to test them again:
+
+- The **Organizations** permission is not the one. npm's own documentation says that
+  organisation access "does not give the token the right to publish packages managed by the
+  organization". Leave it at no access. The permission that matters is **Packages and
+  scopes**, and it has to be write.
+- The **organisation** was never the fault. The account was the owner of the org and a member
+  of the default `developers` team, which has read and write on every package under the
+  scope.
+
+**The failure was safe, and that was luck, not design.** It stopped on the first of five
+packages, so the registry was untouched and the tag could be reused. Had it stopped on the
+fifth, `secretveil` would have been on the registry with four of its platform packages
+missing, and a published version cannot be replaced. Keep the platform packages first in the
+publish loop for this reason, and treat any publish failure as a reason to check the registry
+before doing anything else.
+
+**A new package can 404 for minutes after npm says it published.** `@secretveil/darwin-arm64`
+reported `+ @secretveil/darwin-arm64@0.1.0`, and appeared on the organisation page, while the
+public read endpoint still answered 404. It resolved about seven minutes later. Do not read a
+404 straight after a publish as a failed publish. Read the organisation package list first,
+which is authoritative, then wait.
 
 ## What the dry run proved
 

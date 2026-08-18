@@ -279,3 +279,30 @@ the pseudo terminal path owned the copy, and only it had to own the order.
 **Guard.** `TestAPseudoTerminalKeepsTheLastLine` runs a child that writes 500 lines and stops.
 Every line has to arrive. Note that this test passes on macOS with the old order as well, so
 Linux is where it earns its place.
+
+## D11. The v0.1.0 tag stays on the history that built it
+
+**Date:** 2026-08-18
+
+**What happened.** Every commit was rewritten on 2026-08-18 to carry one author and to drop a
+co-author trailer. The rewrite changed no file. It changed every commit name, because a commit
+name is a hash of the metadata as well as of the tree. `main` moved from `317ec6b` to a new
+line of commits.
+
+**The obstacle.** `v0.1.0` was tagged before the rewrite, and the npm packages of v0.1.0 carry
+a provenance statement that names the commit `317ec6b`. Provenance is a signed claim about
+which workflow built the package, from which commit. A reader verifies it by fetching that
+commit. Moving the tag to the rewritten commit, or deleting the tag, makes `317ec6b`
+unreachable and the claim unverifiable. The packages cannot be republished, because npm does
+not let a version be replaced.
+
+**Decision.** The tag stays where it is. `v0.1.0` points at `317ec6b`, which is not on `main`,
+and the tag is what keeps that commit alive. Do not delete the tag and do not move it.
+
+**The cost.** `git log v0.1.0` shows the old author on the older commits, and `main` does not.
+This is a wart and it is the cheap side of the trade.
+
+**What this means for the next release.** Nothing. v0.1.1 is tagged on the rewritten history
+in the ordinary way, and from then on the two lines agree. The rule to carry forward is
+simpler than this record: **rewrite history before a release, never after one.** A release
+publishes claims about a commit, and those claims outlive the repository layout.
