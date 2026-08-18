@@ -57,28 +57,38 @@ says in the log when it does not.
 
 ## Before the first publish
 
-Three things have to be true and none of them is in this repository:
+Three things have to be true. Two of them are now done.
 
-1. **The `secretveil` npm organisation exists**, because `@secretveil/...` is a scoped name.
-   Make it at <https://www.npmjs.com/org/create>. The free tier is enough for a public
-   package.
-2. **The workflow can authenticate.** There are two ways, and the second is better:
-   - An **`NPM_TOKEN` secret** on the GitHub repository, of type "Automation", so that two
-     factor authentication does not stop the workflow. Set it with
-     `gh secret set NPM_TOKEN`, which reads the value from standard input and never puts it
-     in a command line.
-   - **Trusted publishing**, which npm made generally available in July 2025. npm trusts a
-     named workflow in a named repository through OIDC, so there is no token to make, to
-     store or to rotate, and provenance is written with no `--provenance` flag. Set it up
-     per package at `https://www.npmjs.com/package/<name>/access`. It needs the package to
-     exist already, so the first publish still uses a token.
-3. **The repository is public**, if the packages are to carry provenance. This is a
-   decision, not a step. A private repository still publishes; the packages simply have no
-   provenance statement, and the `repository` link in every package points at a page that
-   answers 404 for everyone who is not a member.
+1. **The `secretveil` npm organisation exists.** Done on 2026-08-16, on the free tier.
+   `@secretveil/...` is a scoped name, and a scope has to belong to an organisation or to a
+   user. The free tier holds any number of public packages.
+2. **The workflow can authenticate.** Open. This is the one step that is left, and it needs
+   a person, because npm asks for the second factor before it makes a token.
+   - For the **first** publish, make a **granular access token** at
+     <https://www.npmjs.com/settings/umer-bytefinch/tokens/new>. Give it write permission on
+     the `@secretveil` scope and on the `secretveil` package, and nothing else. Install it
+     with `gh secret set NPM_TOKEN --repo ByteFinch-Technologies/secretveil`, which reads
+     the value from standard input and puts it in no command line and in no shell history.
+     Read the lifetime that npm offers. npm limits a granular token that is made for
+     automation to a short life, so treat this token as one for the first publish and not as
+     one for the year.
+   - For **every publish after that**, use **trusted publishing**, which npm made generally
+     available in July 2025. npm trusts a named workflow in a named repository through OIDC,
+     so there is no token to make, to store or to rotate, and provenance is written with no
+     `--provenance` flag. Set it up per package at
+     `https://www.npmjs.com/package/<name>/access`, for all five packages. It needs the
+     package to exist, which is why the first publish still uses a token.
+   - Do not make a classic token. npm is withdrawing them. The account pages stop making
+     them in August 2026, and they stop working for a publish in January 2027. An earlier
+     version of this file asked for an "Automation" classic token. That advice is wrong now.
+3. **The repository is public.** Done on 2026-08-16, after a scan of every commit found no
+   credential and no business content. The packages therefore carry provenance, and the
+   `repository` link in each package points at a page that anyone can read.
 
 Until the token exists, the publish job in `.github/workflows/release.yml` is skipped. It
-checks for the token and says so in the log.
+checks for the token and says so in the log. Tag `v0.1.0` only after the token is in place.
+A tag that is spent on a release with no packages cannot be spent again, and the `dist`
+artifact of that run is kept for one day only.
 
 ## What the dry run proved
 
