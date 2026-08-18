@@ -14,6 +14,7 @@ npx secretveil run -- npm run dev
 
 | Page | Read it when |
 |---|---|
+| [How it works](how-it-works.html) | You want the picture before the prose. Open it in a browser. |
 | [Getting started](getting-started.md) | You want the whole thing working in five minutes. |
 | [Install](install.md) | You need npm, Go, a signed archive, or an install that went wrong. |
 | [Commands](commands.md) | You want every command and every flag. |
