@@ -231,7 +231,17 @@ every published package points at a page that answers 404 to everyone who is not
 **A second path.** npm trusted publishing, generally available since July 2025, lets npm
 trust a named workflow through OIDC. There is then no token to make, to store or to rotate,
 and provenance is written with no flag. It is configured per package and needs the package to
-exist, so the first publish still uses an Automation token.
+exist, so the first publish still uses a token.
+
+**Update, 2026-08-18.** Two of the three conditions are met. The free `secretveil`
+organisation was made on 2026-08-16, and the repository was made public the same day after a
+scan of every commit found no credential and no business content. `--provenance` is therefore
+active. The token is the last step and it belongs to a person, because npm asks for the
+second factor before it makes one. It must be a **granular access token**, not the Automation
+classic token that this record first named: npm is withdrawing classic tokens, the account
+pages stop making them in August 2026, and they stop working for a publish in January 2027.
+npm also limits a granular token that is made for automation to a short life, so the token is
+for the first publish only. Trusted publishing takes over from the second publish.
 
 **A trap worth writing down.** To npm a path of two parts is the name of a GitHub repository.
 `npm publish npm/secretveil` reaches for `github.com/npm/secretveil` and fails with a git
