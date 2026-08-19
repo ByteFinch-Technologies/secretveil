@@ -56,19 +56,10 @@ There is no `--provenance` flag here. Provenance records which workflow, on whic
 built the package, so only CI can make one. A publish from a laptop gets none, and it is
 therefore a step down from a tagged release. Use it to recover, not to release.
 
-## The first publish is done
-
-v0.1.0 went to the registry on 2026-08-18. All five packages carry a SLSA provenance
-statement, and `npm install secretveil` on darwin/arm64 fetched the shim and its one platform
-package and printed `0.1.0`.
-
-The release no longer holds a credential. Read "Trusted publishing" for how it authenticates
-now, and "What the first publish taught us" for the two things that cost time and do not have
-to cost it again.
-
 ## Trusted publishing
 
-The release workflow holds no npm credential. It asks GitHub for a short lived identity
+v0.1.0 went to the registry on 2026-08-18. All five packages carry a SLSA provenance
+statement, and the release workflow holds no npm credential. It asks GitHub for a short lived identity
 token, and npm trades that token for the right to publish. There is nothing to store and
 nothing to rotate, and npm writes the provenance statement without being asked for it.
 
@@ -106,55 +97,22 @@ Five things about this cost time if you do not know them first:
 Do not make a classic token. npm is withdrawing them. The account pages stop making them in
 August 2026, and they stop working for a publish in January 2027.
 
-## What the first publish taught us
+## Three things the first publish taught us
 
-**A token that authenticates can still be refused, and npm says 404.** The first attempt
-failed on the first package with
-`E404 Not Found - PUT https://registry.npmjs.org/@secretveil%2fdarwin-arm64`. That reads like
-a missing package, and it is not. npm answers an unauthorised write with 404 rather than 403,
-so that a stranger cannot learn which private packages exist. The token was valid, it had
-authenticated, and it did not carry write permission for the scope. A replacement token
-published all five with no other change.
+**npm answers an unauthorised write with 404, not 403,** so that a stranger cannot learn
+which private packages exist. `E404 Not Found - PUT .../@secretveil%2fdarwin-arm64` meant a
+token without write permission, not a missing package. On a classic token the permission that
+matters is **Packages and scopes**, set to write. The **Organizations** permission is not it,
+and npm's own documentation says so.
 
-Two things this rules out, so nobody has to test them again:
+**Publish the platform packages first, and check the registry after any failure.** The first
+attempt stopped on the first of five, so the registry was untouched and the tag could be
+reused. Had it stopped on the fifth, `secretveil` would have been published with four
+platform packages missing, and a published version cannot be replaced.
 
-- The **Organizations** permission is not the one. npm's own documentation says that
-  organisation access "does not give the token the right to publish packages managed by the
-  organization". Leave it at no access. The permission that matters is **Packages and
-  scopes**, and it has to be write.
-- The **organisation** was never the fault. The account was the owner of the org and a member
-  of the default `developers` team, which has read and write on every package under the
-  scope.
-
-**The failure was safe, and that was luck, not design.** It stopped on the first of five
-packages, so the registry was untouched and the tag could be reused. Had it stopped on the
-fifth, `secretveil` would have been on the registry with four of its platform packages
-missing, and a published version cannot be replaced. Keep the platform packages first in the
-publish loop for this reason, and treat any publish failure as a reason to check the registry
-before doing anything else.
-
-**A new package can 404 for minutes after npm says it published.** `@secretveil/darwin-arm64`
-reported `+ @secretveil/darwin-arm64@0.1.0`, and appeared on the organisation page, while the
-public read endpoint still answered 404. It resolved about seven minutes later. Do not read a
-404 straight after a publish as a failed publish. Read the organisation package list first,
-which is authoritative, then wait.
-
-## What the dry run proved
-
-On 2026-08-16, with the four binaries cross compiled from the `main` commit and no registry
-involved:
-
-- `node npm/build.mjs 0.1.0` wrote all four platform packages and passed its own `file`
-  check, so no package holds a binary for another platform.
-- `npm pack` made five tarballs. The four platform ones hold `bin/secretveil`,
-  `package.json` and `LICENSE`. The main one holds those plus `index.js` and `README.md`,
-  and is 3 kB.
-- Installing the `darwin-arm64` tarball and the main tarball into an empty project put a
-  `node_modules/.bin/secretveil` link in place, and `secretveil version` printed `0.1.0`.
-  That is the whole chain, so the shim resolves the platform package and the `-X` version
-  stamp reaches the binary.
-
-The registry names are free. `secretveil` and `@secretveil/darwin-arm64` both answer 404.
+**A new package can answer 404 for minutes after npm says it published.** Read the
+organisation package list, which is authoritative, then wait. Do not read that 404 as a
+failed publish.
 
 ## Test the shim without publishing
 

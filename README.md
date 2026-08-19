@@ -20,21 +20,9 @@ There is no plugin, no proxy and no integration with any AI tool. There is nothi
 integrate with, because the file on disk has no secret in it. Every AI tool is covered,
 including one released after this was written.
 
-An `.npmrc` is covered too. It cannot hold a handle, because npm reads the file itself and
-would send the handle to the registry, so it holds a variable that npm expands instead:
-
-```
-# before
-//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B
-
-# after
-//registry.npmjs.org/:_authToken=${SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN}
-```
-
-`secretveil run -- npm install` sets that variable and npm authenticates as it always did.
-Without `secretveil run` the variable is unset, npm sends the literal text, and the registry
-refuses it. Nothing leaks either way. The reasoning is in
-[`docs/decisions.md`](docs/decisions.md), D7.
+**Are you an AI agent, or do you want one to install this?** Read
+[`docs/for-agents.md`](docs/for-agents.md). It is the same setup, written as instructions an
+agent can follow without touching a plaintext value.
 
 ---
 
@@ -45,10 +33,9 @@ worse than no tool, because you plan around a protection that is not there.
 
 1. **A program that gets a value can leak it.** `secretveil run` gives the real value to the
    child process, because a program with a handle instead of a password cannot connect to
-   the database. That program can write the value to a file. secretveil filters the output
-   of the child process; it does not control what the child process writes to disk. An agent
-   that can run any build script can get any secret. The adversarial test set asserts this
-   theft **succeeds** (case 6), so it cannot be quietly lost in a later change.
+   the database. That program can write the value to a file. An agent that can run any build
+   script can get any secret. The adversarial test set asserts this theft **succeeds**
+   (case 6), so it cannot be quietly lost in a later change.
 
 2. **The command rules read a name, not a program.** An agent may not run `bash -c printenv`
    or `node -e '...'`. It may run `npm run build`, and that script can hold `printenv`. The
@@ -64,18 +51,16 @@ worse than no tool, because you plan around a protection that is not there.
 
 5. **The agent still learns the shape.** The comment says the length, the character set and
    the entropy. That is deliberate, so the agent writes correct code against the variable.
-   It is not nothing. Do not store a low entropy secret and expect the comment to hide it.
+   Do not store a low entropy secret and expect the comment to hide it.
 
 6. **It rewrites `.env` and `.npmrc`, and no other credential file.** A `.netrc` cannot be
    fixed at all, because curl, git and ftp read it literally and expand no variable. A
    `.yarnrc.yml`, a `.pypirc`, an `aws/credentials` and their relatives are not rewritten
-   either. `secretveil doctor` finds these files, names the line, and says plainly that it
-   cannot protect them. It never reports a clean project on the strength of files it did not
-   open.
+   either. `doctor` finds these files, names the line, and says plainly that it cannot
+   protect them. It never reports a clean project on the strength of files it did not open.
 
-The full reasoning, and what the tool does stop, is in [`docs/threat-model.md`](docs/threat-model.md).
-
----
+The full reasoning, and what the tool does stop, is in
+[`docs/threat-model.md`](docs/threat-model.md).
 
 ## What it does do
 
@@ -84,13 +69,9 @@ The full reasoning, and what the tool does stop, is in [`docs/threat-model.md`](
   that file to read.
 - **Filters the output of your build.** A value that reaches standard output or standard
   error is replaced with its handle first. This catches the stack trace that prints a
-  connection string and the debug line that dumps a config object. The filter works across
-  chunk boundaries and matches the base64 form of each value.
-- **Refuses the cheap environment dump.** `bash -c printenv`, `node -e 'console.log(process.env)'`
-  and their relatives are refused for an agent caller, and the refusal is logged. A path in
-  front of the name does not help.
-- **Keeps a local audit log.** Every run, refusal and reveal is recorded in the project. The
-  log never holds a value, and command lines are redacted before they are written.
+  connection string. The filter works across chunk boundaries and matches the base64 form.
+- **Refuses the cheap environment dump.** `bash -c printenv` and its relatives are refused
+  for an agent caller, and the refusal goes into a local audit log that never holds a value.
 - **Gives back your original file, byte for byte.** `secretveil restore` undoes `init`
   exactly. This is a release gate, tested on every fixture repository.
 
@@ -98,29 +79,15 @@ The full reasoning, and what the tool does stop, is in [`docs/threat-model.md`](
 
 ## Install
 
-Run it once, without an install:
-
 ```sh
-npx secretveil doctor
-```
-
-Install it for one project, so that everybody on the team gets the same version:
-
-```sh
-npm install --save-dev secretveil
-```
-
-Install it for every project on the machine:
-
-```sh
-npm install --global secretveil
+npx secretveil doctor              # run it once, install nothing
+npm install --save-dev secretveil  # one project, one version for the team
+npm install --global secretveil    # every project on this machine
 ```
 
 The npm package holds no binary. It names four platform packages, and npm installs only the
 one that matches the machine: macOS and Linux, on Intel and on ARM. Windows is planned for
-v0.3. There is no build step, and no Go toolchain is needed.
-
-A Go developer may install from source instead:
+v0.3. A Go developer may build from source instead:
 
 ```sh
 go install github.com/ByteFinch-Technologies/secretveil/cmd/secretveil@latest
@@ -128,32 +95,9 @@ go install github.com/ByteFinch-Technologies/secretveil/cmd/secretveil@latest
 
 Each release also carries a signed archive for each platform, with a checksum and a bill of
 materials. [`docs/install.md`](docs/install.md) has the archive, the signature check, and
-what to do when the install goes wrong.
+what to do when an install goes wrong.
 
-## Use it
-
-```sh
-cd your-project
-
-secretveil plan        # show what would change. Writes nothing.
-secretveil init        # move the secrets into the store, put handles in the files
-secretveil doctor      # check the setup and say what to fix
-```
-
-Then put `secretveil run --` in front of the command that needs the values:
-
-```sh
-secretveil run -- npm run dev
-secretveil run -- python manage.py runserver
-secretveil run -- go test ./...
-```
-
-Nothing in your application changes. dotenv, Vite and Next.js all give a variable in the
-environment priority over the same variable in a `.env` file, so your framework loads the
-real value exactly the way it always did. The measurement is recorded as D4 in
-[`docs/decisions.md`](docs/decisions.md).
-
-### A Node project, start to finish
+## Quickstart
 
 Four steps. This is the whole thing.
 
@@ -165,7 +109,7 @@ npx secretveil plan
 ```
 
 `plan` prints one line for each variable: the key, whether it is a secret, and the shape of
-the value. It never prints a value.
+the value. It never prints a value. Read the table before you go on.
 
 **2. Move the secrets out of the file.**
 
@@ -201,11 +145,14 @@ that file lives in the keychain of your operating system, not in the project. `i
 
 ```sh
 npx secretveil run -- npm run dev
+npx secretveil run -- python manage.py runserver
+npx secretveil run -- go test ./...
 ```
 
 Your code does not change. Keep dotenv, Next.js or Vite exactly as they are. `run` puts the
 real values in the environment of the child process, and every one of those loaders gives a
-variable in the environment priority over the same variable in a file.
+variable in the environment priority over the same variable in a file. The measurement is D4
+in [`docs/decisions.md`](docs/decisions.md).
 
 Put it in `package.json`, so that nobody has to remember it:
 
@@ -245,43 +192,38 @@ plaintext secret still in a file, or a credential in a file that secretveil cann
 `run` reads two of those files on its own: `.env` and `.env.local`. Those two names mean the
 same thing in every framework. `.env.production` does not, because Next.js loads it for
 `NODE_ENV=production` and Vite loads it for mode `production`, which is a different question.
-secretveil does not guess. Name the files you want, in load order:
+secretveil does not guess. Name the files you want, in load order, and a later file wins:
 
 ```sh
-secretveil run --env-file .env --env-file .env.development --env-file .env.local -- npm run dev
+secretveil run --env-file .env --env-file .env.development -- npm run dev
 ```
-
-A later file wins over an earlier one, which is the order every framework holds. Put `.env`
-first and `.env.local` last.
 
 You do not have to work this out. `init` prints the whole command when it rewrote a file
-outside the two default names, and `doctor` names any such file and prints the same command:
+outside the two default names, and `doctor` prints the same command. The decision is D8 in
+[`docs/decisions.md`](docs/decisions.md).
+
+### A private npm registry
+
+An `.npmrc` cannot hold a handle, because npm reads the file itself and would send the handle
+to the registry. It holds a variable that npm expands instead:
 
 ```
-!  1 .env file(s) hold a handle that run does not resolve
-   .env.development: init rewrote this file, but run does not read it
-   Your framework reads the file itself and gives the program the handle text.
-   Name the files you want, in load order. A later file wins over an earlier one:
-     secretveil run --env-file .env --env-file .env.development -- <command>
+# before
+//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B
+
+# after
+//registry.npmjs.org/:_authToken=${SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN}
 ```
 
-The decision is recorded as D8 in [`docs/decisions.md`](docs/decisions.md).
+`secretveil run -- npm install` sets that variable and npm authenticates as it always did.
+Without `run` the variable is unset, npm sends the literal text, and the registry refuses it.
+Nothing leaks either way.
 
-### Node projects with a private registry
-
-`init` reads every `.npmrc` under the project, not only the one at the top, so a workspace
-gets the same treatment as the root. Put `secretveil run --` in front of any command that
-talks to the registry:
-
-```sh
-secretveil run -- npm install
-secretveil run -- npm publish
-```
-
-Only a registry credential is rewritten: `_authToken`, `_auth` and `_password`. A registry
-address, a scope mapping and every other setting stay exactly as they are, because npm has to
-read them. A value in quotes is left alone as well, because npm and this tool do not agree on
-what a quoted value means, and a wrong guess would put the wrong bytes in your file.
+`init` reads every `.npmrc` under the project, so a workspace gets the same treatment as the
+root. Only a registry credential is rewritten: `_authToken`, `_auth` and `_password`. Every
+other setting stays as it is, because npm has to read it. A value in quotes is left alone as
+well, because npm and this tool do not agree on what a quoted value means. The reasoning is
+D7 in [`docs/decisions.md`](docs/decisions.md).
 
 ### Every command
 
@@ -301,7 +243,8 @@ what a quoted value means, and a wrong guess would put the wrong bytes in your f
 
 `set` never takes the value from the command line, because every user on the machine can
 read the arguments of a running program and the shell keeps them in its history. It reads
-from a hidden terminal prompt, from standard input, or from `--from-file`.
+from a hidden terminal prompt, from standard input, or from `--from-file`. Every flag is in
+[`docs/commands.md`](docs/commands.md).
 
 ---
 
@@ -319,28 +262,17 @@ Partial disclosure matters more than it looks. An agent that can see the host, t
 the database name of a connection string can write and debug code against it. One that sees
 only `sv://database_url` cannot.
 
-Run `secretveil plan` and read the table before you run `init`. The default output never
-prints a value.
-
----
-
 ## Where the secrets live
 
 One encrypted file, `.secretveil/secrets.age`, in the [age](https://age-encryption.org)
 format. The key that opens it is a 74 character age identity, held in your operating system
-keyring.
-
-The keyring holds the identity and never a secret value. On macOS the keychain silently cuts
-a value at 128 bytes when it is written through the standard input path, and the command
-line path puts the plaintext where every user on the machine can read it with `ps`. Holding
-one short identity avoids both, and it is what makes a multi-line value such as a PEM
-private key work. See D1 in [`docs/decisions.md`](docs/decisions.md).
+keyring. The keyring holds the identity and never a secret value, which is what makes a
+multi-line value such as a PEM private key work. The measurements behind that choice are D1
+in [`docs/decisions.md`](docs/decisions.md).
 
 On a machine with no keyring, set `SECRETVEIL_PASSPHRASE`.
 
 `init` adds `.secretveil/` to `.gitignore`. `doctor` checks that it is still there.
-
----
 
 ## Who is calling
 
@@ -362,32 +294,20 @@ output filter.
 
 ---
 
-## Environment variables
-
-| Name | What it is for |
-|---|---|
-| `SECRETVEIL_CALLER` | `human`, `ci` or `agent`. Overrides the detection rules. |
-| `SECRETVEIL_IDENTITY` | An age identity that opens the store. For CI. |
-| `SECRETVEIL_PASSPHRASE` | A passphrase that opens the store, for a machine with no keyring. |
-
----
-
 ## Documentation
 
 Everything is in [`docs/`](docs/README.md).
 
-- [`docs/getting-started.md`](docs/getting-started.md) — the whole thing working, in five
-  minutes.
-- [`docs/install.md`](docs/install.md) — npm, Go, a signed archive, and what to do when an
-  install goes wrong.
-- [`docs/commands.md`](docs/commands.md) — every command and every flag.
-- [`docs/ci.md`](docs/ci.md) — the same project on a build server, with no keychain and no
-  human.
-- [`docs/faq.md`](docs/faq.md) — the questions people ask on day two.
-- [`docs/threat-model.md`](docs/threat-model.md) — what is stopped, what is not, and why.
-- [`docs/decisions.md`](docs/decisions.md) — each decision that changed the plan, with the
-  measurement that caused it.
-- [`SECURITY.md`](SECURITY.md) — how to report a problem.
+| Page | Read it when |
+|---|---|
+| [`docs/for-agents.md`](docs/for-agents.md) | An AI agent installs or operates this. |
+| [`docs/install.md`](docs/install.md) | You need npm, Go, a signed archive, or a broken install. |
+| [`docs/commands.md`](docs/commands.md) | You want every command and every flag. |
+| [`docs/ci.md`](docs/ci.md) | The build server has no keychain and no human. |
+| [`docs/faq.md`](docs/faq.md) | Something surprised you on day two. |
+| [`docs/threat-model.md`](docs/threat-model.md) | You are deciding whether to rely on this. |
+| [`docs/decisions.md`](docs/decisions.md) | You want the measurement behind a decision. |
+| [`SECURITY.md`](SECURITY.md) | You have a problem to report. |
 
 ## Licence
 
