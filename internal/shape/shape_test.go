@@ -160,7 +160,7 @@ func TestTheAlphabetIsCounted(t *testing.T) {
 		{"has:colon", 0, false},
 	}
 	for _, c := range cases {
-		got, ok := shape.TokenAlphabetForTest(c.value)
+		got, ok := shape.Alphabet(c.value)
 		if ok != c.ok {
 			t.Errorf("%q: read as a token is %v and %v was wanted", c.value, ok, c.ok)
 			continue
@@ -175,17 +175,28 @@ func TestTheAlphabetIsCounted(t *testing.T) {
 //
 // The label of a Telegram credential names the bot and is public. Veiling the
 // whole value would hide which bot the row is about for no gain.
+//
+// The token is generated and not written here. A first version of this test
+// held the example token out of the Telegram documentation, and the host
+// refused it: the value is credential-shaped, a scanner cannot tell a
+// documentation example from a live key, and neither can a reader. That is the
+// same lesson that removed the corpus file in PR 0 and rewrote the shape test
+// in PR 2, and this is the third time it has had to be learned.
 func TestALabelledTokenKeepsItsLabel(t *testing.T) {
-	const value = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-	start, end, ok := shape.LabelledToken(value)
-	if !ok {
-		t.Fatalf("%q is not read as a labelled token", value)
-	}
-	if value[:start] != "123456789:" {
-		t.Errorf("the label kept is %q and \"123456789:\" was wanted", value[:start])
-	}
-	if end != len(value) {
-		t.Errorf("the span ends at %d and %d was wanted", end, len(value))
+	r := rand.New(rand.NewSource(5))
+	const label = "123456789"
+	for i := 0; i < 200; i++ {
+		value := label + ":" + token(r, alphabets["alnum"], 34)
+		start, end, ok := shape.LabelledToken(value)
+		if !ok {
+			t.Fatalf("%q is not read as a labelled token", value)
+		}
+		if value[:start] != label+":" {
+			t.Fatalf("the label kept is %q and %q was wanted", value[:start], label+":")
+		}
+		if end != len(value) {
+			t.Fatalf("the span ends at %d and %d was wanted", end, len(value))
+		}
 	}
 
 	// A colon divides many things that are not a label and a token.

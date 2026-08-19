@@ -457,8 +457,13 @@ func isLowerOrDigit(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
 }
 
-// TokenAlphabetForTest exposes the alphabet size to the test of this package.
-func TokenAlphabetForTest(value string) (int, bool) { return tokenAlphabet(value) }
+// Alphabet reports how many symbols a value could have been drawn from, and
+// whether the value reads as a token at all.
+//
+// A caller outside this package uses it to ask the weaker question that the
+// review detector asks: does this value have the shape of a token, whatever
+// its entropy.
+func Alphabet(value string) (int, bool) { return tokenAlphabet(value) }
 
 // LabelledToken finds a random token that a plain label introduces.
 //
