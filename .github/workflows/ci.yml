@@ -112,6 +112,15 @@ jobs:
       - name: no value survives the filter
         run: go test -count=1 -v ./test/leak/
 
+      # No file of this repository may hold a value shaped like a credential.
+      # The rule has been broken three times: twice the host blocked the push,
+      # and once secret scanning raised an alert after the push went through. A
+      # reader cannot tell a made-up key from a real one, so nobody knows
+      # whether to revoke anything. The check runs the classifier's own shape
+      # rules over every file.
+      - name: no file holds a credential-shaped value
+        run: go test -count=1 -v ./test/hygiene/
+
   # "go test" runs a fuzz target only against the inputs in testdata. That is a
   # handful of cases, and it is not a fuzz run. Two faults in the fuzz targets
   # themselves hid behind that for a whole build, so the targets run here for a
