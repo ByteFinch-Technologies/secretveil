@@ -1,9 +1,15 @@
 // Package classify decides how much of a value an AI agent may see.
 //
-// A value is veiled unless a rule opens it. The rules run in a fixed order and
-// every decision carries the name of the rule that fired, because the init
-// table shows that name to the human. A classifier that cannot explain itself
-// does not get trusted, and a tool that is not trusted gets switched off.
+// A value is open unless a rule veils it. That is the opposite of what a
+// security tool would choose, and it is deliberate: a tool that hides the log
+// level and the time zone is a tool that developers switch off. The cost of
+// the choice is that a credential no rule knows about stays in the file, so
+// every open value is offered to internal/suspect, and a value that reads like
+// a credential is marked for a person to read. See Decision.Review.
+//
+// The rules run in a fixed order and every decision carries the name of the
+// rule that fired, because the init table shows that name to the human. A
+// classifier that cannot explain itself does not get trusted.
 package classify
 
 import (
@@ -13,6 +19,7 @@ import (
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/handle"
 	"github.com/ByteFinch-Technologies/secretveil/internal/shape"
+	"github.com/ByteFinch-Technologies/secretveil/internal/suspect"
 )
 
 // Class says how much of a value survives into the file the agent reads.
@@ -45,6 +52,11 @@ type Decision struct {
 	Shape shape.Shape   `json:"shape"`
 	// Rule names the rule that fired. It is shown to the human.
 	Rule string `json:"rule"`
+	// Review is true when the value stays open and still deserves a person.
+	// It never changes the class, so nothing breaks when it is wrong.
+	Review bool `json:"review,omitempty"`
+	// Reason says why Review is set. It never holds any part of the value.
+	Reason string `json:"reason,omitempty"`
 }
 
 var (
@@ -100,7 +112,44 @@ var (
 
 // Classify decides the class of one key and value.
 func Classify(key, value string) Decision {
-	return dropVeiledSpans(value, classifyValue(key, value))
+	return markForReview(key, value, dropVeiledSpans(value, classifyValue(key, value)))
+}
+
+// markForReview asks whether an open value still deserves a person.
+//
+// It runs on every open value and not only on the one that reached the last
+// rule, because the rule that opened a value can itself be the mistake. A
+// NEXT_PUBLIC_ prefix opens a value on the word of the developer, and a name
+// that holds no secret word opens it on the word of a word list. Neither of
+// them looked at the value.
+//
+// The class never changes here. A wrong mark costs one line that a person
+// reads once, and this function must stay that cheap to be wrong.
+func markForReview(key, value string, d Decision) Decision {
+	if d.Class != Open {
+		return d
+	}
+	// A name term that was checked against the value proves what the value is.
+	// GIT_COMMIT_SHA holds a long run of hexadecimal characters because a
+	// commit identifier is one, and a report on every build server is a report
+	// that people learn to skip. A term that put no requirement on the value,
+	// such as ID or TITLE, proves nothing and is still worth a look.
+	if v, kind := readName(key, value); v == nameConfig && kind != kindAny {
+		return d
+	}
+	reason := suspect.Reason(value)
+	if reason == "" {
+		return d
+	}
+	d.Review = true
+	d.Reason = reason
+	// The value reached the end of the ladder, so no rule recognised it. Say
+	// that in the rule name, because "default-open" reads as a decision and
+	// this was the absence of one.
+	if d.Rule == "default-open" {
+		d.Rule = "unrecognised"
+	}
+	return d
 }
 
 // dropVeiledSpans removes a part of the value that already holds a handle.
@@ -198,7 +247,7 @@ func classifyValue(key, value string) Decision {
 	}
 
 	// Rule 5. The name. See name.go for how a name is read.
-	switch readName(key, value) {
+	switch v, _ := readName(key, value); v {
 	case nameSecret:
 		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "name-secret"}
 	case nameConfig:
