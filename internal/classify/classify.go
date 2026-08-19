@@ -72,21 +72,6 @@ var (
 	// A name that a public bundle already ships. Such a value is not a secret.
 	publicPrefix = regexp.MustCompile(`^(NEXT_PUBLIC_|EXPO_PUBLIC_|VITE_|REACT_APP_|PUBLIC_|NUXT_PUBLIC_|GATSBY_)`)
 
-	// A name that describes a number, a duration or a mode. This rule runs
-	// before the secret-name rule, so REFRESH_TOKEN_TTL_DAYS stays open.
-	neverSecret = regexp.MustCompile(`(?i)(_TTL|TTL_|TIMEOUT|EXPIR|DURATION|INTERVAL|_DELAY|RETRY|RETRIES|` +
-		`LIMIT|_MAX|MAX_|_MIN|MIN_|COUNT|_SIZE|SIZE_|_PORT|^PORT$|REGION|LEVEL|_MODE|MODE_|VERSION|` +
-		`^NODE_ENV$|^ENV$|_ENV$|DEBUG|LOCALE|TIMEZONE|CURRENCY|^LANG$|THRESHOLD|ENABLED|DISABLED|` +
-		`_DAYS|_HOURS|_MINUTES|_SECONDS|_MS$|ROUNDS|ATTEMPTS|WINDOW|PAGE_|PER_PAGE|` +
-		// A path names a place, not a secret. The Docker convention
-		// DB_PASSWORD_FILE=/run/secrets/db is a path and must stay readable.
-		`_PATH|PATH_|_FILE|_DIR|_FOLDER)`)
-
-	// A name that names a secret.
-	secretName = regexp.MustCompile(`(?i)(SECRET|PASSWORD|PASSWD|_PWD|PWD_|TOKEN|PRIVATE|CREDENTIAL|` +
-		`_SALT|SALT_|SIGNING|API_KEY|APIKEY|ACCESS_KEY|CLIENT_SECRET|_AUTH$|AUTH_KEY|DSN|` +
-		`WEBHOOK_URL|_KEY$|KEY_ID|PASSPHRASE|CERT|LICENSE_KEY)`)
-
 	// Composite forms. Each keeps the readable part and veils one field.
 	urlBasicAuth = regexp.MustCompile(`^([a-zA-Z][a-zA-Z0-9+.\-]*://[^:/@\s]+:)([^@/\s]+)(@)`)
 	urlQueryCred = regexp.MustCompile(`(?i)([?&](?:token|key|api_key|apikey|password|secret|sig|signature|access_token|auth)=)([^&\s#]+)`)
@@ -161,21 +146,24 @@ func classifyValue(key, value string) Decision {
 	}
 
 	// Rule 3. A public bundle already ships this value.
-	if publicPrefix.MatchString(key) {
+	//
+	// This runs before the name rules, because the prefix is the stronger
+	// statement: the developer has said the value reaches the browser. It does
+	// not run before the shape rule at rule 2, and it refuses a name that holds
+	// a word which is only ever a credential. See neverPublic in name.go.
+	if publicPrefixOpens(key) {
 		return Decision{Class: Open, Shape: sh, Rule: "public-prefix"}
 	}
 
-	// Rule 4. A number, a duration or a mode. This must beat rule 5.
-	if neverSecret.MatchString(key) {
+	// Rule 4. The name. See name.go for how a name is read.
+	switch readName(key, value) {
+	case nameSecret:
+		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "name-secret"}
+	case nameConfig:
 		return Decision{Class: Open, Shape: sh, Rule: "name-not-secret"}
 	}
 
-	// Rule 5. The name says secret.
-	if secretName.MatchString(key) {
-		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "name-secret"}
-	}
-
-	// Rule 6. A random looking value with an unusual name.
+	// Rule 5. A random looking value with an unusual name.
 	if shape.LooksRandom(value) {
 		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "entropy"}
 	}

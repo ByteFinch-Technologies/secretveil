@@ -21,9 +21,10 @@ const goldenFile = "testdata/decisions.golden"
 // maxMiss is the share of secret rows that the classifier is still allowed to
 // leak. It is a ratchet. Lower it whenever a rule improves and never raise it.
 //
-// It starts at 0.32. The rules of v0.1.0 measure 31.2%, and that number is the
-// reason this whole package exists. The target is 0.
-const maxMiss = 0.32
+// The rules of v0.1.0 measured 31.2%, and that number is the reason this whole
+// package exists. The name rules took it to 3.0%. The target is 0, and every
+// value that still leaks is a value rule or an entropy rule and not a name.
+const maxMiss = 0.035
 
 // The corpus is generated and never committed.
 //
