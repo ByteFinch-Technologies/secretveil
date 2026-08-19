@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/classify"
+	"github.com/ByteFinch-Technologies/secretveil/internal/corpus"
 )
 
 // TestASecretNameIsVeiled holds the list of real credential variable names
@@ -122,6 +123,123 @@ func TestSegmentsReadsAName(t *testing.T) {
 	for _, c := range cases {
 		if got := strings.Join(classify.SegmentsForTest(c.key), " "); got != c.want {
 			t.Errorf("segments(%q) = %q and the rules need %q", c.key, got, c.want)
+		}
+	}
+}
+
+// TestAVariableReferenceNeverEntersTheStore holds the rule that a value which
+// points at another variable is not itself a secret. Veiling one of these
+// wrote the literal text of the reference into the encrypted store.
+func TestAVariableReferenceNeverEntersTheStore(t *testing.T) {
+	cases := []struct{ key, value string }{
+		{"DB_PASSWORD", "${SECRET_ROOT_PW}"},
+		{"API_KEY", "$OTHER_KEY"},
+		{"STRIPE_SECRET_KEY", "${STRIPE_KEY}"},
+		{"AUTH_TOKEN", "  ${TOKEN_SOURCE}  "},
+	}
+	for _, c := range cases {
+		d := classify.Classify(c.key, c.value)
+		if d.Class != classify.Open || d.Rule != "variable-reference" {
+			t.Errorf("%s=%s is %s by rule %q and it only names another variable",
+				c.key, c.value, d.Class, d.Rule)
+		}
+	}
+	// A reference inside a larger value loses its span and keeps the rest.
+	d := classify.Classify("DATABASE_URL", "postgres://app:${DB_PW}@db.internal:5432/app")
+	if d.Rule != "variable-reference" {
+		t.Errorf("a URL whose only credential is a reference is %q and must be variable-reference", d.Rule)
+	}
+	// A real password in the same position still goes to the store.
+	d = classify.Classify("DATABASE_URL", "postgres://app:tr0ub4dor@db.internal:5432/app")
+	if d.Class != classify.Partial {
+		t.Errorf("a URL with a real password is %s and must stay partial", d.Class)
+	}
+}
+
+// TestEveryCompositeFieldIsVeiled proves the four composite forms are
+// cumulative. A URL that carries a password and a token lost the token.
+func TestEveryCompositeFieldIsVeiled(t *testing.T) {
+	cases := []struct {
+		key, value string
+		mustHide   []string
+	}{
+		{
+			"GATEWAY_URL",
+			"https://svcuser:D9Bth4l4aEAaxt@gateway.example.com/v1?token=s3cr3tvalue123&key=aBcDeFgHiJkL",
+			[]string{"D9Bth4l4aEAaxt", "s3cr3tvalue123", "aBcDeFgHiJkL"},
+		},
+		{
+			"CALLBACK",
+			"https://api.example.com/hook?api_key=kR7fMz2QwXpLn4Vb&signature=0f1e2d3c4b5a6978",
+			[]string{"kR7fMz2QwXpLn4Vb", "0f1e2d3c4b5a6978"},
+		},
+	}
+	for _, c := range cases {
+		d := classify.Classify(c.key, c.value)
+		seen := classify.Project(c.value, d)
+		for _, part := range c.mustHide {
+			if strings.Contains(seen, part) {
+				t.Errorf("%s: the agent still reads %q in %q (rule %q)", c.key, part, seen, d.Rule)
+			}
+		}
+		refs := map[string]bool{}
+		for _, s := range d.Spans {
+			if refs[s.Ref] {
+				t.Errorf("%s: two spans share the reference %q, so one value would overwrite the other", c.key, s.Ref)
+			}
+			refs[s.Ref] = true
+		}
+	}
+}
+
+// TestEveryVendorShapeIsRecognised gives each shape a bland name, so only the
+// value rule can save it.
+//
+// The values come from the corpus generator and are not written here. A file
+// of credential-shaped literals is wrong in a public repository: the host
+// refuses the push, and a reader cannot tell a made-up key from a real one.
+// The same lesson removed the corpus file itself in PR 0.
+//
+// The rule name is checked as well as the class. A shape that the entropy rule
+// happens to catch is not recognised, it is only lucky, and the next value of
+// that vendor may be short enough to slip through.
+func TestEveryVendorShapeIsRecognised(t *testing.T) {
+	// The note the corpus writes for a vendor row. The shape name follows it.
+	const prefix = "the value carries the "
+	const suffix = " shape"
+
+	seen := map[string]bool{}
+	for _, r := range corpus.Generate() {
+		if !strings.HasPrefix(r.Note, prefix) || !strings.HasSuffix(r.Note, suffix) {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(r.Note, prefix), suffix)
+		seen[name] = true
+
+		d := classify.Classify(r.Key, r.Value)
+		if d.Class == classify.Open {
+			t.Errorf("a %s value under the name %s is open by rule %q", name, r.Key, d.Rule)
+			continue
+		}
+		if !strings.HasPrefix(d.Rule, "value-") {
+			t.Errorf("a %s value under the name %s was caught by rule %q and not by a shape rule",
+				name, r.Key, d.Rule)
+		}
+	}
+
+	// The loop above proves only what the corpus holds. This list is the
+	// contract: a shape named here must keep a row, so that deleting the row
+	// and deleting the rule cannot happen quietly together.
+	for _, name := range strings.Fields(`
+		aws-access-key-id aws-temp-key-id openai-key openai-project-key
+		stripe-live-key stripe-test-key stripe-restricted-key github-classic
+		github-oauth github-user github-server github-refresh gitlab-token
+		npm-token npm-token-long slack-bot slack-user google-api-key jwt
+		sendgrid twilio-signing-key square-token rsa-private-key
+		openssh-private-key ec-private-key pgp-private-key
+	`) {
+		if !seen[name] {
+			t.Errorf("the corpus holds no %s row, so nothing measures that shape", name)
 		}
 	}
 }

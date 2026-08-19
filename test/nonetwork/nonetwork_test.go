@@ -93,7 +93,12 @@ func isNetworkish(p string) bool {
 }
 
 // address finds a network address in a line of source.
-var address = regexp.MustCompile(`\b(https?|wss?|ftp)://[A-Za-z0-9._~%-]+`)
+//
+// The character class holds a backslash, so that a host written inside a
+// regular expression as hooks\.slack\.com is captured whole. Without it the
+// match stopped at the first escape and the test reported the host as "hooks",
+// which is not the name of anything and cannot be judged.
+var address = regexp.MustCompile(`\b(https?|wss?|ftp)://[A-Za-z0-9._~%\\-]+`)
 
 // allowedHosts names a host that may appear in the source of the program.
 //
@@ -107,6 +112,13 @@ var allowedHosts = map[string]string{
 	"localhost":          "a value in documentation. It is never dialled.",
 	"127.0.0.1":          "a value in documentation. It is never dialled.",
 	"db.internal":        "a value in documentation. It is never dialled.",
+	// A webhook URL is a credential, so the classifier has to recognise one.
+	// The pattern is matched against a value that the tool reads. Nothing in
+	// this program builds a request, and no package of the build graph imports
+	// net/http, which the package test in this file proves separately.
+	"hooks.slack.com": "a credential pattern in internal/classify. It is never dialled.",
+	"discord.com":     "a credential pattern in internal/classify. It is never dialled.",
+	"discordapp.com":  "a credential pattern in internal/classify. It is never dialled.",
 }
 
 // modulePath is the import path of the module. The walk below turns a
@@ -146,7 +158,12 @@ func TestNoTelemetryEndpointIsCompiledIn(t *testing.T) {
 			read++
 			for i, line := range strings.Split(string(body), "\n") {
 				for _, m := range address.FindAllString(line, -1) {
+					// A regular expression writes a dot as \. and a host name
+					// never holds a backslash, so the escapes come out before
+					// the lookup. A pattern that still does not read as a
+					// plain host is not allowed through by this step.
 					host := strings.SplitN(strings.SplitN(m, "://", 2)[1], "/", 2)[0]
+					host = strings.ReplaceAll(host, `\`, "")
 					if _, ok := allowedHosts[host]; ok {
 						continue
 					}
