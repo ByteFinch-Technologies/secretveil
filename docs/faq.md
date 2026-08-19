@@ -6,6 +6,8 @@ Yes, and there is nothing to set up. There is no plugin, no proxy and no integra
 the file on disk holds no secret. Anything that reads the file reads a handle. A tool released
 after this was written is covered as well.
 
+To have an agent install it for you, give it [`for-agents.md`](for-agents.md).
+
 ## Can the agent not just run `secretveil get`?
 
 No. `get --reveal` and `restore` need a human caller. secretveil looks at its environment for
@@ -17,15 +19,13 @@ An unknown caller is read as an agent, so a tool nobody has heard of yet is refu
 
 By running your build. `secretveil run` gives the real value to the child process, because a
 program with a handle instead of a password cannot reach the database. That program can write
-the value to a file, and secretveil does not control what a child process writes to disk.
-
-An agent that can run any build script can get any secret. The adversarial test set asserts
-that this theft **succeeds**, so it cannot be quietly lost in a later change.
+the value to a file, and secretveil does not control what a child process writes to disk. The
+adversarial test set asserts that this theft **succeeds**, so it cannot be quietly lost in a
+later change.
 
 What secretveil removes is the passive read: the agent that opens `.env` because reading
-files is what it does all day. That is the common leak, and it is not an attack.
-
-Read [`threat-model.md`](threat-model.md) for the full picture.
+files is what it does all day. That is the common leak, and it is not an attack. Read
+[`threat-model.md`](threat-model.md) for the full picture.
 
 ## Do I have to change my application?
 
@@ -77,9 +77,8 @@ They get the `.env` file from git, with the handles. They do not get the store, 
 ## Is `.secretveil/secrets.age` safe to commit?
 
 The file is encrypted with [age](https://age-encryption.org/), so it is not plaintext. Even
-so, `init` puts it in `.gitignore`. A committed store is a single file that every future
-holder of the repository can attack offline, and the key is only as good as the place it is
-kept. Keep it out of git.
+so, `init` puts it in `.gitignore`. A committed store is one file that every future holder of
+the repository can attack offline. Keep it out of git.
 
 ## What if I lose the key?
 

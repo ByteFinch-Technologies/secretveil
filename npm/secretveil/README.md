@@ -75,8 +75,10 @@ use it.
 
 ## Documentation
 
-- [Getting started](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/getting-started.md)
-  — the whole thing working, in five minutes.
+- [Quickstart](https://github.com/ByteFinch-Technologies/secretveil#quickstart)
+  — the whole thing working, in four steps.
+- [For agents](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/for-agents.md)
+  — instructions an AI agent can follow to install and operate this.
 - [Commands](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/commands.md)
   — every command and every flag.
 - [CI](https://github.com/ByteFinch-Technologies/secretveil/blob/main/docs/ci.md)
