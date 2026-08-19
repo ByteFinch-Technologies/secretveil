@@ -82,6 +82,17 @@ type Counts struct {
 	Open    int `json:"open"`
 	Partial int `json:"partial"`
 	Veiled  int `json:"veiled"`
+	// Review counts the values that stay open and that a person should read.
+	// It is not a fourth class. Every one of them is already counted in Open.
+	Review int `json:"review,omitempty"`
+}
+
+// Unrecognised is one value that stays in the file and that still reads like a
+// credential. It never holds the value, only the place and the reason.
+type Unrecognised struct {
+	Path   string `json:"path"`
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
 }
 
 // Plan is the whole migration, before any write happens.
@@ -92,6 +103,25 @@ type Plan struct {
 	// Links names every .env file that is a symbolic link. The program never
 	// follows one. The developer has to deal with each one by hand.
 	Links []string `json:"links,omitempty"`
+}
+
+// Unrecognised lists every value that the classifier left open and then marked
+// for a person to read.
+//
+// The order is the order of the plan, so the report reads in the same order as
+// the table above it. Both init and doctor call this, because a list that each
+// of them built for itself would be two lists, and the one a developer trusted
+// would be whichever they read last.
+func (p *Plan) Unrecognised() []Unrecognised {
+	var out []Unrecognised
+	for _, f := range p.Files {
+		for _, e := range f.Entries {
+			if e.Decision.Review {
+				out = append(out, Unrecognised{Path: f.Path, Key: e.Key, Reason: e.Decision.Reason})
+			}
+		}
+	}
+	return out
 }
 
 // entryValue returns the value that one planned entry names, read from the
@@ -255,6 +285,9 @@ func BuildPlan(root string) (*Plan, error) {
 			fp.Entries = planDotenv(src)
 		}
 		for _, e := range fp.Entries {
+			if e.Decision.Review {
+				p.Counts.Review++
+			}
 			switch e.Decision.Class {
 			case classify.Open:
 				p.Counts.Open++
