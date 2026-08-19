@@ -241,7 +241,8 @@ second factor before it makes one. It must be a **granular access token**, not t
 classic token that this record first named: npm is withdrawing classic tokens, the account
 pages stop making them in August 2026, and they stop working for a publish in January 2027.
 npm also limits a granular token that is made for automation to a short life, so the token is
-for the first publish only. Trusted publishing takes over from the second publish.
+for the first publish only. Trusted publishing takes over from the second publish. It did.
+See D12.
 
 **A trap worth writing down.** To npm a path of two parts is the name of a GitHub repository.
 `npm publish npm/secretveil` reaches for `github.com/npm/secretveil` and fails with a git
@@ -306,3 +307,35 @@ This is a wart and it is the cheap side of the trade.
 in the ordinary way, and from then on the two lines agree. The rule to carry forward is
 simpler than this record: **rewrite history before a release, never after one.** A release
 publishes claims about a commit, and those claims outlive the repository layout.
+
+## D12. The release publishes to npm with no credential
+
+**Date:** 2026-08-18
+
+**The question.** v0.1.0 was published with a granular access token that npm gave a seven day
+life. The next release needs an answer that does not expire, and the obvious answer, a longer
+lived token, is the wrong one. A publish token is the most valuable secret this project has.
+It can put code on the machine of every user, it lives in a settings page that no test reads,
+and nothing tells anyone when it leaks.
+
+**Decision.** The workflow authenticates with npm trusted publishing. GitHub gives the job a
+short lived identity token, npm trades that token for the right to publish, and the right
+lasts for the one job. `NODE_AUTH_TOKEN` and the `NPM_TOKEN` secret are both gone from the
+workflow, and so is the `--provenance` flag, because a trusted publish writes the provenance
+statement by itself.
+
+**Why this is stronger than a token, and not only more convenient.** A token answers the
+question "does the caller hold the secret". Trusted publishing answers a narrower one: "is
+this npm's own record of a run of `release.yml`, in `ByteFinch-Technologies/secretveil`, on
+GitHub". A stolen token publishes from anywhere. A stolen identity token is worth nothing
+after the job ends, and there is no long lived secret to steal in the first place.
+
+**The cost.** npm holds one trusted publisher for each package, so all five carry the same
+configuration and a sixth package will not publish until it has one. A package must also
+exist before it can hold a configuration, so a first version can never go out this way. The
+five settings are written down in `npm/README.md`, because they are typed in a web page and
+nothing in this repository can test them.
+
+**What this does not decide.** How a new platform package gets its first version out. That
+needs a token again, for that one publish. Make it then, scope it to that one package, and
+delete it the same day.

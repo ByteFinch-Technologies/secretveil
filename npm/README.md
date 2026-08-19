@@ -37,23 +37,24 @@ macOS binary sees no warning at all, so that check is worth the second it costs.
 
 ## Publish them
 
+CI publishes. This section is for the rare case where a release stops part way and you have
+to finish it by hand.
+
 The platform packages go first. The main package depends on them, and a developer who
 installs `secretveil` before its binary exists gets an error instead of a program.
 
 ```sh
-for d in npm/platforms/*; do npm publish "./$d" --access public --provenance; done
-npm publish ./npm/secretveil --access public --provenance
+for d in npm/platforms/*; do npm publish "./$d" --access public; done
+npm publish ./npm/secretveil --access public
 ```
 
 Keep the `./`. A path of the form `a/b` with two parts is a GitHub repository to npm, not a
 directory, so `npm publish npm/secretveil` tries to reach `github.com/npm/secretveil` and
 fails with a git error that does not say why.
 
-`--provenance` makes npm record which workflow, on which commit, built the package. It works
-only from CI with `id-token: write`, and only from a **public** repository. npm answers a
-private one with "Only public source repositories are supported when publishing with
-provenance". The workflow therefore adds the flag only when the repository is public, and
-says in the log when it does not.
+There is no `--provenance` flag here. Provenance records which workflow, on which commit,
+built the package, so only CI can make one. A publish from a laptop gets none, and it is
+therefore a step down from a tagged release. Use it to recover, not to release.
 
 ## The first publish is done
 
@@ -61,20 +62,46 @@ v0.1.0 went to the registry on 2026-08-18. All five packages carry a SLSA proven
 statement, and `npm install secretveil` on darwin/arm64 fetched the shim and its one platform
 package and printed `0.1.0`.
 
-The section that follows is what the next release needs. Read "What the first publish taught
-us" below before you make a token, because two things cost time that do not have to cost it
-again.
+The release no longer holds a credential. Read "Trusted publishing" for how it authenticates
+now, and "What the first publish taught us" for the two things that cost time and do not have
+to cost it again.
 
-## What the next release needs
+## Trusted publishing
 
-1. **Authentication.** The token that did the first publish is a granular access token with a
-   short life, so it is probably dead by now. Do not make another one. Set up **trusted
-   publishing** instead, per package, at `https://www.npmjs.com/package/<name>/access`, for
-   all five packages. npm then trusts this repository and this workflow through OIDC. There
-   is no token to make, to store or to rotate, and provenance is written with no
-   `--provenance` flag.
-2. **Nothing else.** The organisation exists, the repository is public, and the workflow is
-   proven. Tag `vX.Y.Z` and the release runs.
+The release workflow holds no npm credential. It asks GitHub for a short lived identity
+token, and npm trades that token for the right to publish. There is nothing to store and
+nothing to rotate, and npm writes the provenance statement without being asked for it.
+
+npm keeps one trusted publisher **for each package**, so all five need the same settings.
+Set each one at `https://www.npmjs.com/package/<name>/access`, in the trusted publisher
+section:
+
+| Field | Value |
+|---|---|
+| Publisher | GitHub Actions |
+| Organization or user | `ByteFinch-Technologies` |
+| Repository | `secretveil` |
+| Workflow filename | `release.yml` |
+| Environment | leave it empty |
+| Allowed actions | `npm publish` |
+
+The five packages are `secretveil`, `@secretveil/darwin-arm64`, `@secretveil/darwin-x64`,
+`@secretveil/linux-x64` and `@secretveil/linux-arm64`.
+
+Five things about this cost time if you do not know them first:
+
+- The **workflow filename** is the name of the file alone. It is `release.yml`, not
+  `.github/workflows/release.yml`.
+- **Allowed actions** has to be set. npm refuses a configuration made after 20 May 2026 that
+  names no action.
+- The package has to **exist** before it can hold a trusted publisher, so a first version
+  cannot go out by OIDC alone. A new platform package needs one publish by another route,
+  and a configuration after it.
+- Trusted publishing needs **npm 11.5.1 or later** and **Node 22.14.0 or later**. An older
+  npm does not report that it cannot do it. It asks for a token instead, and the publish
+  then fails with a 404 that reads like a missing package.
+- The page is behind a **second authentication**. npm asks for the security key again before
+  it shows the access page of a package.
 
 Do not make a classic token. npm is withdrawing them. The account pages stop making them in
 August 2026, and they stop working for a publish in January 2027.
