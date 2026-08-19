@@ -153,6 +153,90 @@ environment priority over the same variable in a `.env` file, so your framework 
 real value exactly the way it always did. The measurement is recorded as D4 in
 [`docs/decisions.md`](docs/decisions.md).
 
+### A Node project, start to finish
+
+Four steps. This is the whole thing.
+
+**1. Look first. It writes nothing.**
+
+```sh
+cd your-project
+npx secretveil plan
+```
+
+`plan` prints one line for each variable: the key, whether it is a secret, and the shape of
+the value. It never prints a value.
+
+**2. Move the secrets out of the file.**
+
+```sh
+npx secretveil init
+```
+
+Your `.env` changes from this:
+
+```
+API_KEY=sk-live-Q9xR2mVn7pLwT4aZ
+DATABASE_URL=postgres://app:hunter2@db.host:5432/prod
+NODE_ENV=development
+```
+
+to this:
+
+```
+API_KEY=sv://api_key            # sv: 24 chars, base64, entropy 4.5
+DATABASE_URL=postgres://app:sv://database_url_password@db.host:5432/prod
+NODE_ENV=development
+```
+
+Read what stayed. `NODE_ENV` is not a secret, so it is untouched. In the database URL only
+the password moved, so the host, the port and the database name stay readable. Your agent
+reads this file and writes correct code against it. It does not read the secrets.
+
+The real values go into one encrypted file, `.secretveil/secrets.age`. The key that opens
+that file lives in the keychain of your operating system, not in the project. `init` adds
+`.secretveil/` to `.gitignore` for you.
+
+**3. Put `secretveil run --` in front of your command.**
+
+```sh
+npx secretveil run -- npm run dev
+```
+
+Your code does not change. Keep dotenv, Next.js or Vite exactly as they are. `run` puts the
+real values in the environment of the child process, and every one of those loaders gives a
+variable in the environment priority over the same variable in a file.
+
+Put it in `package.json`, so that nobody has to remember it:
+
+```json
+{
+  "scripts": {
+    "dev": "secretveil run -- next dev",
+    "test": "secretveil run -- vitest"
+  }
+}
+```
+
+Then `npm run dev` works as it did before.
+
+**4. Check the setup.**
+
+```sh
+npx secretveil doctor
+```
+
+`doctor` names anything that will surprise you later: a handle with no value behind it, a
+plaintext secret still in a file, or a credential in a file that secretveil cannot rewrite.
+
+**Two more things you will want.**
+
+- To undo all of it, run `secretveil restore`. It gives back your original file byte for
+  byte.
+- A teammate pulls the `.env` with the handles from git, then runs `secretveil set api_key`
+  once for each value. The prompt is hidden. The command never takes a value from the
+  command line.
+
 ### More than one `.env` file
 
 `init` moves the secrets out of every `.env` file it finds, so `.env.development`,
@@ -212,6 +296,8 @@ what a quoted value means, and a wrong guess would put the wrong bytes in your f
 | `list` | Print the name of every secret in the store. |
 | `get <ref>` | Print one plaintext value. Needs `--reveal` and a human caller. |
 | `rm <ref>` | Remove one secret from the store. |
+| `version` | Print the version. |
+| `completion <shell>` | Print the autocompletion script for bash, zsh, fish or PowerShell. |
 
 `set` never takes the value from the command line, because every user on the machine can
 read the arguments of a running program and the shell keeps them in its history. It reads
