@@ -1,0 +1,31 @@
+# Keep the pins fresh.
+#
+# Every action in .github/workflows is pinned to a commit, which is what stops
+# the owner of an action from changing what runs. A pin does not update itself,
+# so a pinned action can hold a fault long after a fix exists. Dependabot is the
+# other half of that trade: it raises a pull request when a new release is out,
+# and it writes the new commit and the new version comment for us.
+#
+# Go modules are here for the same reason. Only the two direct dependencies of
+# the release path are large, and a pull request is cheap to read.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels: [dependencies]
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    labels: [dependencies]
+    groups:
+      go-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]

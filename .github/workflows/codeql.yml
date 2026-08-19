@@ -1,0 +1,60 @@
+# Read the Go code and look for a fault that a test cannot see.
+#
+# CodeQL asks questions of the code itself, not of one run of it. It finds the
+# path from a value that a person controls to a place that must not take one.
+# The CI job answers "does it work". This job answers "can it be made to do
+# something else".
+#
+# The result goes to the Security tab of the repository. A public repository
+# gets this at no cost, and a report from a person outside the project arrives
+# through private vulnerability reporting instead.
+#
+# Every action is pinned to a commit. The reason is written out in release.yml.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Once a week. A new query can find an old fault, so the scan has to run
+    # even when nobody pushes.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze go
+    runs-on: ubuntu-latest
+    permissions:
+      # The only extra right this job needs. It writes the findings, and it
+      # cannot write the code.
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: initialize codeql
+        uses: github/codeql-action/init@67ba681cdcbc95ed0371c210ccf82c4d968ae5eb # v3.37.7
+        with:
+          languages: go
+          # security-extended adds the queries that report a lower confidence
+          # finding. A tool that holds secrets is worth the extra reading.
+          queries: security-extended
+
+      - name: build
+        uses: github/codeql-action/autobuild@67ba681cdcbc95ed0371c210ccf82c4d968ae5eb # v3.37.7
+
+      - name: analyze
+        uses: github/codeql-action/analyze@67ba681cdcbc95ed0371c210ccf82c4d968ae5eb # v3.37.7
+        with:
+          category: /language:go
