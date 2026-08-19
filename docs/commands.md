@@ -15,6 +15,7 @@ from the program, so it is never out of date.
 | [`list`](#list) | Print the name of every secret in the store. | nothing |
 | [`rm`](#rm) | Remove one secret from the store. | store |
 | `version` | Print the version. | nothing |
+| [`completion`](#completion) | Print the shell autocompletion script. | nothing |
 
 Each command that takes a path takes it as the first argument, and uses the current directory
 when you give none. The project is the first directory at or above that path that holds a
@@ -223,6 +224,23 @@ secretveil rm <ref>
 
 Removes one secret from the store. Run `doctor` after it: a handle left in a file with no
 value behind it is exactly what `doctor` reports.
+
+---
+
+## completion
+
+```sh
+secretveil completion bash|zsh|fish|powershell
+```
+
+Prints an autocompletion script for the shell you name. The command prints the script and
+writes nothing, so send the output to the place your shell reads. For zsh:
+
+```sh
+secretveil completion zsh > "${fpath[1]}/_secretveil"
+```
+
+Run `secretveil completion <shell> --help` for the path that your shell wants.
 
 ---
 
