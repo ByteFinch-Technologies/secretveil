@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"filippo.io/age"
@@ -361,4 +363,86 @@ func TestAWriteReachesTheDiskDirectory(t *testing.T) {
 	if got != "Zx91qLbT4vNs7Kd2FhWm0PjR" {
 		t.Errorf("the value is %q", got)
 	}
+}
+
+// TestASecondWriterDoesNotLoseTheFirstValue is the test for the lost write.
+//
+// Two shells that run "secretveil set" at the same moment are two writers of
+// one file. Each one reads the whole store, adds one value and writes the
+// whole store back. Each Store value here stands for one of those processes,
+// and the advisory lock is on the directory, so two Store values in one test
+// contend exactly as two processes do.
+func TestASecondWriterDoesNotLoseTheFirstValue(t *testing.T) {
+	ctx := context.Background()
+	first, ring, path := newTestStore(t)
+	if err := first.Set(ctx, "start", "Zx91qLbT4vNs7Kd2FhWm0PjR"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The second writer reads the store before the first writer changes it,
+	// which is what a second shell does when it starts.
+	second := New(path, ring, "test.identity")
+	if _, err := second.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := first.Set(ctx, "from_first", "Ge72uPdA8wFn3Jm5RcVt6Byq"); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Set(ctx, "from_second", "Kp38sHnE5vLq7Wm2XbTy9Cdr"); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := New(path, ring, "test.identity")
+	refs, err := fresh.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"start", "from_first", "from_second"} {
+		if !containsRef(refs, want) {
+			t.Errorf("the store lost %q. It holds %v", want, refs)
+		}
+	}
+}
+
+// TestEveryConcurrentWriteSurvives runs the writers at the same time.
+func TestEveryConcurrentWriteSurvives(t *testing.T) {
+	ctx := context.Background()
+	_, ring, path := newTestStore(t)
+	const writers = 8
+
+	var wg sync.WaitGroup
+	errs := make([]error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			w := New(path, ring, "test.identity")
+			errs[i] = w.Set(ctx, fmt.Sprintf("ref_%d", i), fmt.Sprintf("value_%d", i))
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("writer %d failed: %v", i, err)
+		}
+	}
+	fresh := New(path, ring, "test.identity")
+	refs, err := fresh.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != writers {
+		t.Errorf("the store holds %d references, want %d. It holds %v", len(refs), writers, refs)
+	}
+}
+
+func containsRef(refs []string, want string) bool {
+	for _, r := range refs {
+		if r == want {
+			return true
+		}
+	}
+	return false
 }
