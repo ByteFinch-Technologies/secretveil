@@ -105,6 +105,11 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 			if err != nil {
 				return err
 			}
+			// The log must never hold a value. Every value that came out of
+			// the store is named here, so the log removes it with certainty
+			// and does not have to guess at it.
+			log.Hide(res.Values)
+
 			if len(res.Missing) > 0 && !allowMiss {
 				return fmt.Errorf("the store holds no value for %s.\n"+
 					"Run \"secretveil set <ref>\" to add it, or pass --allow-missing to start anyway",
