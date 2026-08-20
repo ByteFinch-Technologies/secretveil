@@ -1,4 +1,4 @@
-# classifier version 2
+# classifier version 3
 # The decision for every corpus row. Regenerate with -update.
 # want key class rule result
 secret	ADMIN_PASSWORD	veiled	name-secret	held
@@ -534,9 +534,9 @@ secret	SETTING	veiled	value-stripe-live-key	held
 secret	ITEM	veiled	value-stripe-test-key	held
 secret	SETTING	veiled	value-stripe-test-key	held
 secret	CONFIG_VALUE	veiled	value-stripe-test-key	held
-secret	SETTING	veiled	entropy	held
-secret	CONFIG_VALUE	veiled	entropy	held
-secret	APP_DATA	veiled	entropy	held
+secret	SETTING	veiled	value-stripe-restricted-key	held
+secret	CONFIG_VALUE	veiled	value-stripe-restricted-key	held
+secret	APP_DATA	veiled	value-stripe-restricted-key	held
 secret	CONFIG_VALUE	veiled	value-github-token	held
 secret	APP_DATA	veiled	value-github-token	held
 secret	PARAM	veiled	value-github-token	held
@@ -558,9 +558,9 @@ secret	APP_DATA	veiled	value-gitlab-token	held
 secret	CONFIG_VALUE	veiled	value-npm-token	held
 secret	APP_DATA	veiled	value-npm-token	held
 secret	PARAM	veiled	value-npm-token	held
-secret	APP_DATA	veiled	entropy	held
-secret	PARAM	veiled	entropy	held
-secret	OPTION	veiled	entropy	held
+secret	APP_DATA	veiled	value-npm-token	held
+secret	PARAM	veiled	value-npm-token	held
+secret	OPTION	veiled	value-npm-token	held
 secret	PARAM	veiled	value-slack-token	held
 secret	OPTION	veiled	value-slack-token	held
 secret	ITEM	veiled	value-slack-token	held
@@ -573,15 +573,15 @@ secret	CONFIG_VALUE	veiled	value-google-api-key	held
 secret	SETTING	veiled	value-jwt	held
 secret	CONFIG_VALUE	veiled	value-jwt	held
 secret	APP_DATA	veiled	value-jwt	held
-secret	CONFIG_VALUE	open	default-open	LEAKS
-secret	APP_DATA	open	default-open	LEAKS
-secret	PARAM	open	default-open	LEAKS
-secret	APP_DATA	veiled	entropy	held
-secret	PARAM	open	default-open	LEAKS
-secret	OPTION	veiled	entropy	held
-secret	PARAM	veiled	entropy	held
-secret	OPTION	veiled	entropy	held
-secret	ITEM	veiled	entropy	held
+secret	CONFIG_VALUE	veiled	value-sendgrid-key	held
+secret	APP_DATA	veiled	value-sendgrid-key	held
+secret	PARAM	veiled	value-sendgrid-key	held
+secret	APP_DATA	veiled	value-twilio-signing-key	held
+secret	PARAM	veiled	value-twilio-signing-key	held
+secret	OPTION	veiled	value-twilio-signing-key	held
+secret	PARAM	veiled	value-square-token	held
+secret	OPTION	veiled	value-square-token	held
+secret	ITEM	veiled	value-square-token	held
 secret	OPTION	veiled	value-private-key	held
 secret	ITEM	veiled	value-private-key	held
 secret	SETTING	veiled	value-private-key	held
@@ -591,9 +591,9 @@ secret	CONFIG_VALUE	veiled	value-private-key	held
 secret	SETTING	veiled	value-private-key	held
 secret	CONFIG_VALUE	veiled	value-private-key	held
 secret	APP_DATA	veiled	value-private-key	held
-secret	CONFIG_VALUE	open	default-open	LEAKS
-secret	APP_DATA	open	default-open	LEAKS
-secret	PARAM	open	default-open	LEAKS
+secret	CONFIG_VALUE	veiled	value-private-key	held
+secret	APP_DATA	veiled	value-private-key	held
+secret	PARAM	veiled	value-private-key	held
 secret	ACME_BLURB	open	default-open	LEAKS
 secret	SETTING	open	default-open	LEAKS
 secret	OPTION_A	open	default-open	LEAKS
@@ -664,9 +664,9 @@ secret	MONGO_URI	partial	url-password	held
 secret	FEED_URL	partial	url-query-credential	held
 secret	FEED_URL	partial	url-query-credential	held
 secret	FEED_URL	partial	url-query-credential	held
-secret	GATEWAY_URL	partial	url-password	LEAKS
-secret	GATEWAY_URL	partial	url-password	LEAKS
-secret	GATEWAY_URL	partial	url-password	LEAKS
+secret	GATEWAY_URL	partial	url-password+url-query-credential	held
+secret	GATEWAY_URL	partial	url-password+url-query-credential	held
+secret	GATEWAY_URL	partial	url-password+url-query-credential	held
 secret	SQL_CONNECTION	partial	connection-string-password	held
 secret	SQL_CONNECTION	partial	connection-string-password	held
 secret	SQL_CONNECTION	partial	connection-string-password	held
