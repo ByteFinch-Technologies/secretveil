@@ -7,4 +7,4 @@ package classify
 //
 // Raise it in the same commit as the rule change. TestVersionRisesWithTheRules
 // fails when the golden decisions move and this number does not.
-const Version = 1
+const Version = 2
