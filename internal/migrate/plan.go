@@ -4,6 +4,7 @@
 package migrate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -127,10 +128,11 @@ func (p *Plan) Unrecognised() []Unrecognised {
 // entryValue returns the value that one planned entry names, read from the
 // bytes of its file.
 //
-// This is the one place that knows how each kind of file is addressed. A .env
-// file is addressed by key, because that is what a loader does. An .npmrc file
-// is addressed by line, because the same key may appear twice and only the
-// position says which record holds which value.
+// Every kind of file is addressed by record, because a .env file and an .npmrc
+// file may both name the same key twice, and only the position says which
+// record holds which value. Reading a .env file by key gave the last value to
+// every record of that key. The first value then reached neither the store nor
+// the rewrite, and it stayed in the file in the clear.
 func entryValue(kind FileKind, src []byte, e Entry) (string, bool) {
 	if kind == KindNpmrc {
 		lines := npmrc.Parse(src).Lines
@@ -145,7 +147,15 @@ func entryValue(kind FileKind, src []byte, e Entry) (string, bool) {
 		}
 		return line.Value, true
 	}
-	return envfile.Parse(src).Get(e.Key)
+	lines := envfile.Parse(src).Lines
+	if e.Line < 1 || e.Line > len(lines) {
+		return "", false
+	}
+	line := lines[e.Line-1]
+	if line.Kind != envfile.Assignment || line.Key != e.Key {
+		return "", false
+	}
+	return line.Value, true
 }
 
 // Secrets returns the reference and the real value of everything that must go
@@ -169,7 +179,18 @@ func (p *Plan) Secrets(read func(path string) ([]byte, error)) (map[string]strin
 				if span.Start < 0 || span.End > len(value) || span.Start > span.End {
 					continue
 				}
-				out[span.Ref] = value[span.Start:span.End]
+				part := value[span.Start:span.End]
+				// One reference must name one value. A second value under the
+				// same name would replace the first here, and the first would
+				// then reach neither the store nor the check that searches the
+				// tree for it. resolveCollisions gives a new name to every
+				// owner after the first, so this cannot happen. It is checked
+				// because the cost of a miss is a secret left in the clear.
+				if old, seen := out[span.Ref]; seen && old != part {
+					return nil, fmt.Errorf(
+						"the reference %s names two different values, so one of them would be lost", span.Ref)
+				}
+				out[span.Ref] = part
 			}
 		}
 	}
@@ -306,9 +327,17 @@ func BuildPlan(root string) (*Plan, error) {
 }
 
 // planDotenv classifies every variable in a .env file.
+//
+// Each entry names a record and not a key. A .env file may name the same key
+// twice, and each of the two records may hold a different secret.
 func planDotenv(src []byte) []Entry {
 	var out []Entry
-	for _, line := range envfile.Parse(src).Assignments() {
+	lines := envfile.Parse(src).Lines
+	for i := range lines {
+		line := &lines[i]
+		if line.Kind != envfile.Assignment {
+			continue
+		}
 		d := classify.Classify(line.Key, line.Value)
 		refs := make([]string, 0, len(d.Spans))
 		for _, s := range d.Spans {
@@ -319,6 +348,7 @@ func planDotenv(src []byte) []Entry {
 			Decision:  d,
 			Projected: classify.Project(line.Value, d),
 			Refs:      refs,
+			Line:      i + 1,
 		})
 	}
 	return out

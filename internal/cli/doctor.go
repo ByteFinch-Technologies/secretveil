@@ -390,6 +390,12 @@ func plannedLine(plan *migrate.Plan) func(path string, line int) bool {
 	}
 	planned := map[string]map[int]bool{}
 	for _, f := range plan.Files {
+		// Only a file whose record index is also its physical line belongs in
+		// this map. A .env record with a multi-line quoted value covers more
+		// than one physical line, so its index would mark the wrong line here.
+		if f.Kind != migrate.KindNpmrc {
+			continue
+		}
 		for _, e := range f.Entries {
 			if e.Line == 0 {
 				continue
