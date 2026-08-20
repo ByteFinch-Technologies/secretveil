@@ -133,7 +133,11 @@ func runChecks(ctx context.Context, root string) []finding {
 
 	add(checkCaller())
 	st, file := openStore(root)
-	add(checkStore(root, file))
+	// The handles come first, because the advice for a missing store depends
+	// on them. A project whose files already hold handles does not wait for
+	// init.
+	used := handlesInFiles(root)
+	add(checkStore(file, used))
 
 	refs, err := file.List(ctx)
 	if err != nil {
@@ -156,7 +160,6 @@ func runChecks(ctx context.Context, root string) []finding {
 	add(checkUnrecognised(root, plan))
 	add(checkUncovered(root, plan))
 	add(checkUnread(root))
-	used := handlesInFiles(root)
 	add(checkDangling(ctx, st, used))
 	add(checkOrphans(refs, used))
 	add(checkLinks(root, plan))
@@ -180,9 +183,19 @@ func checkCaller() finding {
 	return f
 }
 
-func checkStore(root string, file *agefile.Store) finding {
+func checkStore(file *agefile.Store, used map[string][]string) finding {
 	path := filepath.Join(project.Dir, agefile.FileName)
 	if _, err := os.Stat(file.Path()); err != nil {
+		// A project whose files already hold handles does not wait for init.
+		// The store and its key belong to the person who ran init, and they
+		// travel out of band. A second init here would only write a second
+		// empty store, and it would not give this machine the values.
+		if len(used) > 0 {
+			return finding{levelBad, "the files of this project hold handles, and there is no store at " + path, []string{
+				"Get " + path + " and its key from the person who ran \"secretveil init\".",
+				"Or run \"secretveil set <ref>\" for each handle, to write the values again on this machine.",
+			}}
+		}
 		return finding{levelNote, "there is no store yet at " + path, []string{
 			"Run \"secretveil init\" to move the secrets of this project into one.",
 		}}

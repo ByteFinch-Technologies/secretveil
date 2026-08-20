@@ -54,10 +54,26 @@ type Resolution struct {
 	// Skipped names each variable that the parent environment already holds.
 	// The parent value stays, which is what dotenv, Vite and Next.js all do.
 	Skipped []string
+	// Err holds the first fault that was not a missing reference. A store
+	// that does not open is not the same as a value that nobody has set, and
+	// the caller must not tell the developer to set a value that is already
+	// there. Every reference then looks missing, and the cause is the key.
+	Err error
 	// Files names each file that was read, in the order it was read.
 	Files []string
 	// Handles counts the handles that were replaced.
 	Handles int
+}
+
+// keepFault records the first fault that is not a missing reference.
+//
+// The store already tells the two apart: it returns store.ErrNotFound only
+// when it opened and the reference is not in it. Any other error means the
+// store could not be read, and every reference then looks missing.
+func keepFault(res *Resolution, err error) {
+	if res.Err == nil && !errors.Is(err, store.ErrNotFound) {
+		res.Err = err
+	}
 }
 
 // Options controls a resolve pass.
@@ -136,6 +152,7 @@ func Resolve(ctx context.Context, st store.Store, opt Options) (*Resolution, err
 					if !ok {
 						got, err := st.Get(ctx, ref)
 						if err != nil {
+							keepFault(res, err)
 							gone[ref] = true
 							return "", false
 						}
@@ -194,6 +211,7 @@ func Resolve(ctx context.Context, st store.Store, opt Options) (*Resolution, err
 			if !ok {
 				got, err := st.Get(ctx, ref)
 				if err != nil {
+					keepFault(res, err)
 					gone[ref] = true
 					addOnce(&res.Missing, ref)
 					continue
