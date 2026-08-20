@@ -109,19 +109,34 @@ var allowedHosts = map[string]string{
 	"db.internal":        "a value in documentation. It is never dialled.",
 }
 
+// modulePath is the import path of the module. The walk below turns a
+// directory into an import path with it.
+const modulePath = "github.com/ByteFinch-Technologies/secretveil"
+
 // TestNoTelemetryEndpointIsCompiledIn is a second look from another angle. A
 // package list cannot see a URL that a future author writes into a string.
 //
 // Only a file that goes into the binary is read. A test file can hold any
-// address it likes, because a test file is not shipped.
+// address it likes, because a test file is not shipped, and so can a package
+// that no command imports. The build graph decides which package that is, so
+// the rule is enforced by a machine and not by a name.
 func TestNoTelemetryEndpointIsCompiledIn(t *testing.T) {
-	var read int
+	shipped := map[string]bool{}
+	for _, p := range deps(t) {
+		shipped[p] = true
+	}
+	var read, skipped int
 	for _, dir := range []string{"../../cmd", "../../internal"} {
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			pkg := modulePath + "/" + filepath.ToSlash(strings.TrimPrefix(filepath.Dir(path), "../../"))
+			if !shipped[pkg] {
+				skipped++
 				return nil
 			}
 			body, err := os.ReadFile(path)
@@ -152,6 +167,26 @@ func TestNoTelemetryEndpointIsCompiledIn(t *testing.T) {
 	// many source files, so a small count means the walk itself is at fault.
 	if read < 10 {
 		t.Errorf("only %d source files were read, so this test proves nothing. Check the walk.", read)
+	}
+	t.Logf("%d shipped source files were read and %d files of packages no command imports were skipped", read, skipped)
+}
+
+// TestTheWalkSkipsOnlyWhatNoCommandImports proves the skip above cannot hide a
+// package that does ship. A test-only package is named here on purpose, so
+// that adding an import of it from a command makes this test fail.
+func TestTheWalkSkipsOnlyWhatNoCommandImports(t *testing.T) {
+	shipped := map[string]bool{}
+	for _, p := range deps(t) {
+		shipped[p] = true
+	}
+	for _, p := range []string{"/internal/classify", "/internal/store", "/internal/redact", "/internal/cli"} {
+		if !shipped[modulePath+p] {
+			t.Errorf("%s is not in the build graph, so the walk would skip it. Check deps.", p)
+		}
+	}
+	if shipped[modulePath+"/internal/corpus"] {
+		t.Errorf("internal/corpus is in the build graph of the command.\n" +
+			"It holds a labelled set of made-up credentials for the tests and must never ship.")
 	}
 }
 
