@@ -598,7 +598,23 @@ func writeAtomic(path string, body []byte, mode os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(name, path)
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+// syncDir writes the directory entry of a renamed file to the disk. The rename
+// is atomic against a reader, and it is not durable against a power cut until
+// the directory itself reaches the disk. init rewrites the .env files of the
+// project, so a lost rename here loses the file that names the handles.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // Manifest records a backup.

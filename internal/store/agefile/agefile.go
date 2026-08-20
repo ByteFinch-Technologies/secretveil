@@ -290,7 +290,27 @@ func writeFileAtomic(path string, body []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+// syncDir writes the directory entry of a renamed file to the disk.
+//
+// os.Rename is atomic against a reader, and it is not durable against a power
+// cut. The new name lives in the directory, and the directory itself sits in
+// the cache of the operating system until something writes it out. A crash
+// straight after a rename can therefore leave the old name, the new name, or
+// neither. This store holds the only copy of every secret of the project, so
+// the write must survive the crash that the atomic rename already survives.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func (s *Store) Get(_ context.Context, ref string) (string, error) {
