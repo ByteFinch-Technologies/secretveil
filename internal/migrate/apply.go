@@ -693,6 +693,24 @@ func addIgnore(root string) (func() error, error) {
 // a build product or a data set, and reading it would make init slow.
 const maxSearchSize = 4 << 20
 
+// SearchTree looks for every secret value in every file under root.
+//
+// It is exported for doctor, which had asked the classifier whether a file
+// held a plaintext secret. That question is circular: a value the classifier
+// failed to recognise is a value the classifier reports as safe, so the one
+// fault the check exists to find is the one fault it could never report. This
+// function asks the file instead, and a file cannot be talked round.
+//
+// Two limits are deliberate. A value shorter than six characters is skipped,
+// because ordinary text holds a short string by accident and the report would
+// be noise. A file larger than maxSearchSize is skipped, because it is a build
+// product or a data set and reading it would make the command slow.
+//
+// The result never holds a value, only the place where one was found.
+func SearchTree(root string, secrets map[string]string) ([]Leftover, error) {
+	return searchTree(root, secrets)
+}
+
 // searchTree looks for every secret value in every file under root.
 func searchTree(root string, secrets map[string]string) ([]Leftover, error) {
 	refs := sortedKeys(secrets)

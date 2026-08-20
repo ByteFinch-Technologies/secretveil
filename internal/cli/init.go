@@ -55,13 +55,25 @@ byte for byte.`,
 				return err
 			}
 			if plan.Counts.Partial+plan.Counts.Veiled == 0 {
-				fmt.Fprintf(out, "There is no secret to move under %s.\n", root)
+				// "There is no secret here" is the most dangerous sentence
+				// this tool prints, and this is the only path that prints it.
+				// It claims the rules looked and found nothing, when what the
+				// rules did was recognise nothing. Say the second thing when
+				// any value is waiting for a person.
+				if plan.Counts.Review == 0 {
+					fmt.Fprintf(out, "There is no secret to move under %s.\n", root)
+				} else {
+					fmt.Fprintf(out, "No rule found a secret to move under %s.\n", root)
+				}
 				if plan.Counts.Open > 0 {
 					fmt.Fprintf(out, "%d variables look open, so they stay as they are.\n", plan.Counts.Open)
 				}
 				for _, l := range plan.Links {
 					fmt.Fprintf(out, "%s is a symbolic link, and secretveil never follows one.\n", l)
 				}
+				// This path never reaches writeTable, so the block is printed
+				// here as well. It is also the path that needs it most.
+				writeUnrecognised(out, plan, root)
 				return nil
 			}
 

@@ -93,7 +93,12 @@ func isNetworkish(p string) bool {
 }
 
 // address finds a network address in a line of source.
-var address = regexp.MustCompile(`\b(https?|wss?|ftp)://[A-Za-z0-9._~%-]+`)
+//
+// The character class holds a backslash, so that a host written inside a
+// regular expression as hooks\.slack\.com is captured whole. Without it the
+// match stopped at the first escape and the test reported the host as "hooks",
+// which is not the name of anything and cannot be judged.
+var address = regexp.MustCompile(`\b(https?|wss?|ftp)://[A-Za-z0-9._~%\\-]+`)
 
 // allowedHosts names a host that may appear in the source of the program.
 //
@@ -107,21 +112,43 @@ var allowedHosts = map[string]string{
 	"localhost":          "a value in documentation. It is never dialled.",
 	"127.0.0.1":          "a value in documentation. It is never dialled.",
 	"db.internal":        "a value in documentation. It is never dialled.",
+	// A webhook URL is a credential, so the classifier has to recognise one.
+	// The pattern is matched against a value that the tool reads. Nothing in
+	// this program builds a request, and no package of the build graph imports
+	// net/http, which the package test in this file proves separately.
+	"hooks.slack.com": "a credential pattern in internal/classify. It is never dialled.",
+	"discord.com":     "a credential pattern in internal/classify. It is never dialled.",
+	"discordapp.com":  "a credential pattern in internal/classify. It is never dialled.",
 }
+
+// modulePath is the import path of the module. The walk below turns a
+// directory into an import path with it.
+const modulePath = "github.com/ByteFinch-Technologies/secretveil"
 
 // TestNoTelemetryEndpointIsCompiledIn is a second look from another angle. A
 // package list cannot see a URL that a future author writes into a string.
 //
 // Only a file that goes into the binary is read. A test file can hold any
-// address it likes, because a test file is not shipped.
+// address it likes, because a test file is not shipped, and so can a package
+// that no command imports. The build graph decides which package that is, so
+// the rule is enforced by a machine and not by a name.
 func TestNoTelemetryEndpointIsCompiledIn(t *testing.T) {
-	var read int
+	shipped := map[string]bool{}
+	for _, p := range deps(t) {
+		shipped[p] = true
+	}
+	var read, skipped int
 	for _, dir := range []string{"../../cmd", "../../internal"} {
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			pkg := modulePath + "/" + filepath.ToSlash(strings.TrimPrefix(filepath.Dir(path), "../../"))
+			if !shipped[pkg] {
+				skipped++
 				return nil
 			}
 			body, err := os.ReadFile(path)
@@ -131,7 +158,12 @@ func TestNoTelemetryEndpointIsCompiledIn(t *testing.T) {
 			read++
 			for i, line := range strings.Split(string(body), "\n") {
 				for _, m := range address.FindAllString(line, -1) {
+					// A regular expression writes a dot as \. and a host name
+					// never holds a backslash, so the escapes come out before
+					// the lookup. A pattern that still does not read as a
+					// plain host is not allowed through by this step.
 					host := strings.SplitN(strings.SplitN(m, "://", 2)[1], "/", 2)[0]
+					host = strings.ReplaceAll(host, `\`, "")
 					if _, ok := allowedHosts[host]; ok {
 						continue
 					}
@@ -152,6 +184,26 @@ func TestNoTelemetryEndpointIsCompiledIn(t *testing.T) {
 	// many source files, so a small count means the walk itself is at fault.
 	if read < 10 {
 		t.Errorf("only %d source files were read, so this test proves nothing. Check the walk.", read)
+	}
+	t.Logf("%d shipped source files were read and %d files of packages no command imports were skipped", read, skipped)
+}
+
+// TestTheWalkSkipsOnlyWhatNoCommandImports proves the skip above cannot hide a
+// package that does ship. A test-only package is named here on purpose, so
+// that adding an import of it from a command makes this test fail.
+func TestTheWalkSkipsOnlyWhatNoCommandImports(t *testing.T) {
+	shipped := map[string]bool{}
+	for _, p := range deps(t) {
+		shipped[p] = true
+	}
+	for _, p := range []string{"/internal/classify", "/internal/store", "/internal/redact", "/internal/cli"} {
+		if !shipped[modulePath+p] {
+			t.Errorf("%s is not in the build graph, so the walk would skip it. Check deps.", p)
+		}
+	}
+	if shipped[modulePath+"/internal/corpus"] {
+		t.Errorf("internal/corpus is in the build graph of the command.\n" +
+			"It holds a labelled set of made-up credentials for the tests and must never ship.")
 	}
 }
 

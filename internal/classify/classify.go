@@ -1,17 +1,25 @@
 // Package classify decides how much of a value an AI agent may see.
 //
-// A value is veiled unless a rule opens it. The rules run in a fixed order and
-// every decision carries the name of the rule that fired, because the init
-// table shows that name to the human. A classifier that cannot explain itself
-// does not get trusted, and a tool that is not trusted gets switched off.
+// A value is open unless a rule veils it. That is the opposite of what a
+// security tool would choose, and it is deliberate: a tool that hides the log
+// level and the time zone is a tool that developers switch off. The cost of
+// the choice is that a credential no rule knows about stays in the file, so
+// every open value is offered to internal/suspect, and a value that reads like
+// a credential is marked for a person to read. See Decision.Review.
+//
+// The rules run in a fixed order and every decision carries the name of the
+// rule that fired, because the init table shows that name to the human. A
+// classifier that cannot explain itself does not get trusted.
 package classify
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/handle"
 	"github.com/ByteFinch-Technologies/secretveil/internal/shape"
+	"github.com/ByteFinch-Technologies/secretveil/internal/suspect"
 )
 
 // Class says how much of a value survives into the file the agent reads.
@@ -44,6 +52,11 @@ type Decision struct {
 	Shape shape.Shape   `json:"shape"`
 	// Rule names the rule that fired. It is shown to the human.
 	Rule string `json:"rule"`
+	// Review is true when the value stays open and still deserves a person.
+	// It never changes the class, so nothing breaks when it is wrong.
+	Review bool `json:"review,omitempty"`
+	// Reason says why Review is set. It never holds any part of the value.
+	Reason string `json:"reason,omitempty"`
 }
 
 var (
@@ -60,43 +73,83 @@ var (
 		{regexp.MustCompile(`^sk-[A-Za-z0-9_\-]{20,}$`), "openai-key", 0},
 		{regexp.MustCompile(`^sk_live_[A-Za-z0-9]{20,}$`), "stripe-live-key", 0},
 		{regexp.MustCompile(`^sk_test_[A-Za-z0-9]{20,}$`), "stripe-test-key", 0},
+		{regexp.MustCompile(`^rk_(live|test)_[A-Za-z0-9]{20,}$`), "stripe-restricted-key", 0},
 		{regexp.MustCompile(`^gh[pousr]_[A-Za-z0-9]{36,}$`), "github-token", 0},
 		{regexp.MustCompile(`^glpat-[A-Za-z0-9_\-]{20,}$`), "gitlab-token", 0},
-		{regexp.MustCompile(`^npm_[A-Za-z0-9]{36}$`), "npm-token", 0},
-		{regexp.MustCompile(`^xox[bpsara]-[0-9A-Za-z\-]{10,}$`), "slack-token", 0},
-		{regexp.MustCompile(`^AIza[0-9A-Za-z_\-]{35}$`), "google-api-key", 0},
+		// A vendor lengthens a token and does not rename it. Every count here
+		// is a floor, never an exact number, so a longer token still matches.
+		{regexp.MustCompile(`^npm_[A-Za-z0-9]{36,}$`), "npm-token", 0},
+		{regexp.MustCompile(`^xox[bpsarae]-[0-9A-Za-z\-]{10,}$`), "slack-token", 0},
+		{regexp.MustCompile(`^https://hooks\.slack\.com/services/\S+$`), "slack-webhook", 0},
+		{regexp.MustCompile(`^https://discord\.com/api/webhooks/\S+$`), "discord-webhook", 0},
+		{regexp.MustCompile(`^https://discordapp\.com/api/webhooks/\S+$`), "discord-webhook", 0},
+		{regexp.MustCompile(`^AIza[0-9A-Za-z_\-]{35,}$`), "google-api-key", 0},
+		{regexp.MustCompile(`^SG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}$`), "sendgrid-key", 0},
+		// A Twilio signing key identifier. The account identifier starts AC and
+		// is public, so it is not here.
+		{regexp.MustCompile(`^SK[0-9a-fA-F]{32}$`), "twilio-signing-key", 0},
+		{regexp.MustCompile(`^sq0(atp|csp|idp)-[A-Za-z0-9_\-]{20,}$`), "square-token", 0},
+		{regexp.MustCompile(`^shp(at|ca|pa|ss)_[0-9a-fA-F]{32,}$`), "shopify-token", 0},
+		{regexp.MustCompile(`^key-[0-9a-fA-F]{32}$`), "mailgun-key", 0},
 		{regexp.MustCompile(`^eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}$`), "jwt", 0},
-		{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`), "private-key", 0},
+		// The algorithm word is not always upper case and PGP writes BLOCK
+		// after the words PRIVATE KEY, so both parts are loose.
+		{regexp.MustCompile(`(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----`), "private-key", 0},
 	}
 
 	// A name that a public bundle already ships. Such a value is not a secret.
 	publicPrefix = regexp.MustCompile(`^(NEXT_PUBLIC_|EXPO_PUBLIC_|VITE_|REACT_APP_|PUBLIC_|NUXT_PUBLIC_|GATSBY_)`)
-
-	// A name that describes a number, a duration or a mode. This rule runs
-	// before the secret-name rule, so REFRESH_TOKEN_TTL_DAYS stays open.
-	neverSecret = regexp.MustCompile(`(?i)(_TTL|TTL_|TIMEOUT|EXPIR|DURATION|INTERVAL|_DELAY|RETRY|RETRIES|` +
-		`LIMIT|_MAX|MAX_|_MIN|MIN_|COUNT|_SIZE|SIZE_|_PORT|^PORT$|REGION|LEVEL|_MODE|MODE_|VERSION|` +
-		`^NODE_ENV$|^ENV$|_ENV$|DEBUG|LOCALE|TIMEZONE|CURRENCY|^LANG$|THRESHOLD|ENABLED|DISABLED|` +
-		`_DAYS|_HOURS|_MINUTES|_SECONDS|_MS$|ROUNDS|ATTEMPTS|WINDOW|PAGE_|PER_PAGE|` +
-		// A path names a place, not a secret. The Docker convention
-		// DB_PASSWORD_FILE=/run/secrets/db is a path and must stay readable.
-		`_PATH|PATH_|_FILE|_DIR|_FOLDER)`)
-
-	// A name that names a secret.
-	secretName = regexp.MustCompile(`(?i)(SECRET|PASSWORD|PASSWD|_PWD|PWD_|TOKEN|PRIVATE|CREDENTIAL|` +
-		`_SALT|SALT_|SIGNING|API_KEY|APIKEY|ACCESS_KEY|CLIENT_SECRET|_AUTH$|AUTH_KEY|DSN|` +
-		`WEBHOOK_URL|_KEY$|KEY_ID|PASSPHRASE|CERT|LICENSE_KEY)`)
 
 	// Composite forms. Each keeps the readable part and veils one field.
 	urlBasicAuth = regexp.MustCompile(`^([a-zA-Z][a-zA-Z0-9+.\-]*://[^:/@\s]+:)([^@/\s]+)(@)`)
 	urlQueryCred = regexp.MustCompile(`(?i)([?&](?:token|key|api_key|apikey|password|secret|sig|signature|access_token|auth)=)([^&\s#]+)`)
 	adoPassword  = regexp.MustCompile(`(?i)((?:^|;)\s*(?:password|pwd)\s*=\s*)([^;]+)`)
 	bearerToken  = regexp.MustCompile(`(?i)^(Bearer\s+)(\S+)$`)
+
+	// A reference to another variable, in either shell form.
+	varReference = regexp.MustCompile(`^(\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)$`)
 )
 
 // Classify decides the class of one key and value.
 func Classify(key, value string) Decision {
-	return dropVeiledSpans(value, classifyValue(key, value))
+	return markForReview(key, value, dropVeiledSpans(value, classifyValue(key, value)))
+}
+
+// markForReview asks whether an open value still deserves a person.
+//
+// It runs on every open value and not only on the one that reached the last
+// rule, because the rule that opened a value can itself be the mistake. A
+// NEXT_PUBLIC_ prefix opens a value on the word of the developer, and a name
+// that holds no secret word opens it on the word of a word list. Neither of
+// them looked at the value.
+//
+// The class never changes here. A wrong mark costs one line that a person
+// reads once, and this function must stay that cheap to be wrong.
+func markForReview(key, value string, d Decision) Decision {
+	if d.Class != Open {
+		return d
+	}
+	// A name term that was checked against the value proves what the value is.
+	// GIT_COMMIT_SHA holds a long run of hexadecimal characters because a
+	// commit identifier is one, and a report on every build server is a report
+	// that people learn to skip. A term that put no requirement on the value,
+	// such as ID or TITLE, proves nothing and is still worth a look.
+	if v, kind := readName(key, value); v == nameConfig && kind != kindAny {
+		return d
+	}
+	reason := suspect.Reason(value)
+	if reason == "" {
+		return d
+	}
+	d.Review = true
+	d.Reason = reason
+	// The value reached the end of the ladder, so no rule recognised it. Say
+	// that in the rule name, because "default-open" reads as a decision and
+	// this was the absence of one.
+	if d.Rule == "default-open" {
+		d.Rule = "unrecognised"
+	}
+	return d
 }
 
 // dropVeiledSpans removes a part of the value that already holds a handle.
@@ -114,17 +167,26 @@ func dropVeiledSpans(value string, d Decision) Decision {
 		return d
 	}
 	kept := make([]handle.Span, 0, len(d.Spans))
+	dropped := "already-veiled"
 	for _, s := range d.Spans {
 		if s.Start < 0 || s.End > len(value) || s.Start > s.End {
 			continue
 		}
-		if strings.HasPrefix(value[s.Start:s.End], handle.Scheme) {
+		text := value[s.Start:s.End]
+		if strings.HasPrefix(text, handle.Scheme) {
+			continue
+		}
+		// The span holds ${OTHER} and not a secret. Storing that text would
+		// put the name of a variable into the store as if it were the value,
+		// and the real secret would still be wherever OTHER points.
+		if varReference.MatchString(text) {
+			dropped = "variable-reference"
 			continue
 		}
 		kept = append(kept, s)
 	}
 	if len(kept) == 0 {
-		return Decision{Class: Open, Shape: d.Shape, Rule: "already-veiled"}
+		return Decision{Class: Open, Shape: d.Shape, Rule: dropped}
 	}
 	d.Spans = kept
 	return d
@@ -139,12 +201,26 @@ func classifyValue(key, value string) Decision {
 		return Decision{Class: Open, Shape: sh, Rule: "empty"}
 	}
 
-	// Rule 1. A composite value keeps its readable part.
+	// Rule 1. The value points at another variable.
+	//
+	// DB_PASSWORD=${SECRET_ROOT_PW} holds no secret. The secret is whatever
+	// SECRET_ROOT_PW holds, and that variable is classified on its own row or
+	// comes from the environment. Veiling this one wrote the literal text
+	// "${SECRET_ROOT_PW}" into the encrypted store as if it were the password.
+	//
+	// The reference is deliberately not resolved. Resolving it would put one
+	// secret in the store twice under two references, and restore would then
+	// have to write the reference back and not the value it stood for.
+	if varReference.MatchString(strings.TrimSpace(value)) {
+		return Decision{Class: Open, Shape: sh, Rule: "variable-reference"}
+	}
+
+	// Rule 2. A composite value keeps its readable part.
 	if spans, rule := composite(key, value); len(spans) > 0 {
 		return Decision{Class: Partial, Spans: spans, Shape: sh, Rule: rule}
 	}
 
-	// Rule 2. A credential shape in the value beats every name rule.
+	// Rule 3. A credential shape in the value beats every name rule.
 	for _, c := range credentialShapes {
 		if !c.re.MatchString(value) {
 			continue
@@ -160,22 +236,38 @@ func classifyValue(key, value string) Decision {
 		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "value-" + c.name}
 	}
 
-	// Rule 3. A public bundle already ships this value.
-	if publicPrefix.MatchString(key) {
+	// Rule 4. A public bundle already ships this value.
+	//
+	// This runs before the name rules, because the prefix is the stronger
+	// statement: the developer has said the value reaches the browser. It does
+	// not run before the shape rule at rule 3, and it refuses a name that holds
+	// a word which is only ever a credential. See neverPublic in name.go.
+	if publicPrefixOpens(key) {
 		return Decision{Class: Open, Shape: sh, Rule: "public-prefix"}
 	}
 
-	// Rule 4. A number, a duration or a mode. This must beat rule 5.
-	if neverSecret.MatchString(key) {
+	// Rule 5. The name. See name.go for how a name is read.
+	switch v, _ := readName(key, value); v {
+	case nameSecret:
+		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "name-secret"}
+	case nameConfig:
 		return Decision{Class: Open, Shape: sh, Rule: "name-not-secret"}
 	}
 
-	// Rule 5. The name says secret.
-	if secretName.MatchString(key) {
-		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "name-secret"}
+	// Rule 6. A random token that a plain label introduces.
+	//
+	// The label is kept and only the token is veiled, so the rewritten file
+	// still says which bot or which account the row is about.
+	if start, end, ok := shape.LabelledToken(value); ok {
+		return Decision{
+			Class: Partial,
+			Spans: []handle.Span{{Start: start, End: end, Ref: handle.Ref(key)}},
+			Shape: sh,
+			Rule:  "labelled-token",
+		}
 	}
 
-	// Rule 6. A random looking value with an unusual name.
+	// Rule 7. A random looking value with an unusual name.
 	if shape.LooksRandom(value) {
 		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "entropy"}
 	}
@@ -183,31 +275,59 @@ func classifyValue(key, value string) Decision {
 	return Decision{Class: Open, Shape: sh, Rule: "default-open"}
 }
 
-// composite finds the one field of a structured value that must be veiled.
+// composite finds every field of a structured value that must be veiled.
+//
+// The four forms are cumulative and not mutually exclusive. A gateway URL can
+// carry a password in its authority and a token in its query at the same time,
+// and an early return kept the token in the clear.
+//
+// A span that overlaps one already kept is dropped, and the first rule to
+// claim a stretch of the value wins it. Every reference is made unique, so two
+// forms that both name a password do not write two values under one reference.
 func composite(key, value string) ([]handle.Span, string) {
 	base := handle.Ref(key)
+	used := map[string]bool{}
+	var spans []handle.Span
+	var rules []string
+
+	// ref returns a reference that no other span of this value holds.
+	ref := func(suffix string) string {
+		want := base + suffix
+		for i := 2; used[want]; i++ {
+			want = base + suffix + strconv.Itoa(i)
+		}
+		used[want] = true
+		return want
+	}
+	// add keeps a span unless it overlaps one already kept.
+	add := func(rule string, start, end int, suffix string) {
+		for _, s := range spans {
+			if start < s.End && s.Start < end {
+				return
+			}
+		}
+		spans = append(spans, handle.Span{Start: start, End: end, Ref: ref(suffix)})
+		if len(rules) == 0 || rules[len(rules)-1] != rule {
+			rules = append(rules, rule)
+		}
+	}
 
 	if m := urlBasicAuth.FindStringSubmatchIndex(value); m != nil {
-		return []handle.Span{{Start: m[4], End: m[5], Ref: base + "_password"}}, "url-password"
+		add("url-password", m[4], m[5], "_password")
 	}
 	if m := adoPassword.FindStringSubmatchIndex(value); m != nil {
-		return []handle.Span{{Start: m[4], End: m[5], Ref: base + "_password"}}, "connection-string-password"
+		add("connection-string-password", m[4], m[5], "_password")
 	}
 	if m := bearerToken.FindStringSubmatchIndex(value); m != nil {
-		return []handle.Span{{Start: m[4], End: m[5], Ref: base + "_token"}}, "bearer-token"
+		add("bearer-token", m[4], m[5], "_token")
 	}
-	if all := urlQueryCred.FindAllStringSubmatchIndex(value, -1); len(all) > 0 {
-		spans := make([]handle.Span, 0, len(all))
-		for i, m := range all {
-			ref := base + "_param"
-			if i > 0 {
-				ref = base + "_param" + string(rune('1'+i))
-			}
-			spans = append(spans, handle.Span{Start: m[4], End: m[5], Ref: ref})
-		}
-		return spans, "url-query-credential"
+	for _, m := range urlQueryCred.FindAllStringSubmatchIndex(value, -1) {
+		add("url-query-credential", m[4], m[5], "_param")
 	}
-	return nil, ""
+	if len(spans) == 0 {
+		return nil, ""
+	}
+	return spans, strings.Join(rules, "+")
 }
 
 // Project renders the value as the agent will see it.

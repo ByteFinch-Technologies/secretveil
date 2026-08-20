@@ -45,7 +45,7 @@ SPACED = value with spaces
 	},
 	"a file with a multi-line value": {
 		".env": `PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ
+this-is-not-a-key-it-is-a-fixture-for-the-restore-test
 -----END PRIVATE KEY-----"
 PORT=3000
 `,
