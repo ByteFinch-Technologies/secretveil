@@ -298,7 +298,7 @@ func TestMultilineValueSurvives(t *testing.T) {
 	ctx := context.Background()
 	s, _, path := newTestStore(t)
 	pem := "-----BEGIN RSA PRIVATE KEY-----\n" +
-		strings.Repeat("MIIEowIBAAKCAQEAxyz0123456789abcdefghij\n", 40) +
+		strings.Repeat("this-is-not-a-key-it-is-a-test-fixture0\n", 40) +
 		"-----END RSA PRIVATE KEY-----\n"
 	if len(pem) <= keyring.MaxLen {
 		t.Fatalf("the test value must be longer than the keyring limit, it is %d", len(pem))

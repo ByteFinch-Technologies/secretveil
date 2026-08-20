@@ -205,7 +205,20 @@ func classifyValue(key, value string) Decision {
 		return Decision{Class: Open, Shape: sh, Rule: "name-not-secret"}
 	}
 
-	// Rule 6. A random looking value with an unusual name.
+	// Rule 6. A random token that a plain label introduces.
+	//
+	// The label is kept and only the token is veiled, so the rewritten file
+	// still says which bot or which account the row is about.
+	if start, end, ok := shape.LabelledToken(value); ok {
+		return Decision{
+			Class: Partial,
+			Spans: []handle.Span{{Start: start, End: end, Ref: handle.Ref(key)}},
+			Shape: sh,
+			Rule:  "labelled-token",
+		}
+	}
+
+	// Rule 7. A random looking value with an unusual name.
 	if shape.LooksRandom(value) {
 		return Decision{Class: Veiled, Spans: whole, Shape: sh, Rule: "entropy"}
 	}
