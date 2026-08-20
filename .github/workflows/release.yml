@@ -72,7 +72,15 @@ jobs:
           go-version-file: go.mod
           check-latest: false
 
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      # The cosign version is pinned. Version 4 of this action installs cosign
+      # v3 by default, and cosign v3 needs the --bundle flag on sign-blob. Our
+      # .goreleaser.yaml writes a separate certificate and signature, and
+      # docs/install.md tells the user to verify with that pair. Cosign v2 is
+      # still maintained. A move to the v3 bundle format is a separate change
+      # that must update the signing arguments and the document together.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.6.5
 
       - name: say which cosign is installed
         run: cosign version
@@ -80,7 +88,7 @@ jobs:
       # syft writes the bill of materials that goes beside each archive.
       - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
-      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "~> v2"
           args: >-
@@ -92,7 +100,7 @@ jobs:
       # The npm job needs the same binaries. They are handed over rather than
       # built again, so that the file a developer gets from npm is the same
       # file that the checksum on the release page describes.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: dist
           retention-days: 1
@@ -114,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -128,7 +136,7 @@ jobs:
       - name: get an npm that knows trusted publishing
         run: npm install --global npm@latest
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist
           path: dist
