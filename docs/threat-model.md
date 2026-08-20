@@ -71,7 +71,7 @@ easiest to block. Do not read them as a sandbox. They are not one.
 ### 2.3 The output filter has a floor
 
 The filter removes every secret value from the output of the child process, in either
-direction, across chunk boundaries, and in base64 form. It does not remove a value that is
+direction, across chunk boundaries, and in encoded form. It does not remove a value that is
 too short to remove safely. A four character password appears in ordinary text, and a filter
 that removed every four character run would destroy the output.
 
@@ -147,8 +147,11 @@ stack trace that prints a connection string, a debug line that dumps a config ob
 verbose HTTP client that echoes an Authorization header.
 
 The filter is a streaming Aho-Corasick matcher. It holds back the last `n-1` bytes so a
-value split across two writes is still caught, and it matches the base64 form of each value
-as well as the value itself.
+value split across two writes is still caught, and it matches the encoded forms of each
+value as well as the value itself. The encoded forms are base64 in both alphabets, hex in
+both cases, the URL escape and the JSON string escape. Both base64 alphabets matter: the URL
+alphabet is the one a JWT uses, and it is what Python `urlsafe_b64encode` and Node
+`base64url` produce.
 
 ### 3.3 The cheap environment dump
 
