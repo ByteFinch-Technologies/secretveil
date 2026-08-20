@@ -222,6 +222,40 @@ func TestRedact(t *testing.T) {
 		name: "a sentence that uses a credential word loses its tail",
 		in:   []string{"git", "commit", "-m", "rotate the token before friday"},
 		want: []string{"git", "commit", "-m", "rotate the token [hidden] [hidden]"},
+	}, {
+		// The URL keeps its shape, so the log still says which database the
+		// command reached.
+		name: "a database URL loses its password and keeps the rest",
+		in:   []string{"psql", "postgres://app:Hunter2Pw@db/orders"},
+		want: []string{"psql", "postgres://app:[hidden]@db/orders"},
+	}, {
+		name: "a query parameter that names a credential loses its value",
+		in:   []string{"curl", "https://acme.io?token=Kq7dGx2Lm&p=2"},
+		want: []string{"curl", "https://acme.io?token=[hidden]&p=2"},
+	}, {
+		// No flag names this value. Only its own shape says what it is.
+		name: "a bare token goes",
+		in:   []string{"deploy", "Kq7dGx2LmPvR9tYwZa4BnCeH"},
+		want: []string{"deploy", "[hidden]"},
+	}, {
+		name: "a URL with no credential in it is left alone",
+		in:   []string{"curl", "https://acme.io/v1/orders?p=2"},
+		want: []string{"curl", "https://acme.io/v1/orders?p=2"},
+	}, {
+		name: "a user name with no password is left alone",
+		in:   []string{"ssh", "ssh://deploy@build.acme.io/srv"},
+		want: []string{"ssh", "ssh://deploy@build.acme.io/srv"},
+	}, {
+		name: "a path, a flag and a file name are left alone",
+		in:   []string{"node", "--max-old-space-size=4096", "src/index.js"},
+		want: []string{"node", "--max-old-space-size=4096", "src/index.js"},
+	}, {
+		// The random test costs a commit hash, which reads as random because
+		// it is. The log loses the hash and keeps the secret out. That trade
+		// is the same one every other rule here makes.
+		name: "a long commit hash goes too, and that is the cost",
+		in:   []string{"git", "checkout", "3f2a1b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a"},
+		want: []string{"git", "checkout", "[hidden]"},
 	}}
 
 	for _, c := range cases {
@@ -258,6 +292,61 @@ func TestWriteRedactsTheCommand(t *testing.T) {
 	}
 	if strings.Contains(string(body), value) {
 		t.Fatalf("the log holds a value that looks like a secret:\n%s", body)
+	}
+}
+
+// TestTheLogNeverHoldsAValueTheStoreHolds proves the certain rule and not the
+// guess.
+//
+// The value here reads as an ordinary word, so every heuristic in this file
+// lets it through. run knows it came out of the store, and that alone is
+// enough to keep it out of the log.
+func TestTheLogNeverHoldsAValueTheStoreHolds(t *testing.T) {
+	root := project(t)
+	const value = "summer2026"
+
+	args := []string{"deploy", "--to", value, "--url=postgres://app:" + value + "@db/x"}
+
+	// The guard. If a guess already hid this value, the test below would pass
+	// without Hide doing anything.
+	if got := Redact(args); got[2] != value {
+		t.Fatalf("a guess already hides %q, so this test proves nothing", value)
+	}
+
+	log := New(root)
+	log.Hide(map[string]string{"db_password": value})
+	if err := log.Write(Record{Event: EventRun, Command: args}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(root, ".secretveil", FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), value) {
+		t.Fatalf("the log holds a value that the store holds:\n%s", body)
+	}
+}
+
+// TestHideKeepsAShortValue records the floor. A value of three characters
+// matches too much other text, and a log that reads "[hidden]" everywhere
+// answers no question.
+func TestHideKeepsAShortValue(t *testing.T) {
+	root := project(t)
+	const value = "abc"
+
+	log := New(root)
+	log.Hide(map[string]string{"pin": value})
+	if err := log.Write(Record{Event: EventRun, Command: []string{"echo", value}}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(root, ".secretveil", FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), value) {
+		t.Fatalf("a value below the floor was hidden, which the doc comment says it is not:\n%s", body)
 	}
 }
 
