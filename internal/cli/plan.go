@@ -75,6 +75,13 @@ func writeTable(out io.Writer, p *migrate.Plan, root string) {
 				shapeText = fmt.Sprintf("%d chars, %s, entropy %.1f",
 					e.Decision.Shape.Length, e.Decision.Shape.Charset, e.Decision.Shape.Entropy)
 			}
+			// An open row has no shape to print, so the column is free. The
+			// mark goes here and not in a column of its own, because it points
+			// at the block under the table and a reader must be able to join
+			// the two without counting rows.
+			if e.Decision.Review {
+				shapeText = "<- read this one"
+			}
 			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", e.Key, e.Decision.Class, e.Decision.Rule, shapeText)
 		}
 		w.Flush()
@@ -97,12 +104,57 @@ func writeTable(out io.Writer, p *migrate.Plan, root string) {
 		}
 	}
 
+	writeUnrecognised(out, p, root)
+
 	if dupes := p.DuplicateRefs(); len(dupes) > 0 {
 		fmt.Fprintf(out, "\n%d reference names collide. init must rename them first:\n", len(dupes))
 		for ref, owners := range dupes {
 			fmt.Fprintf(out, "  %s  <-  %s\n", ref, strings.Join(owners, ", "))
 		}
 	}
+}
+
+// writeUnrecognised prints the values that stay in the file and that still
+// read like a credential.
+//
+// This block is the answer to the one thing the tool could not do before it.
+// A value that no rule recognised was printed as "open", and "open" reads as a
+// decision. It was the absence of one, and the developer had no reason to look
+// again. The block says the opposite in words: nothing here knows what this
+// value is, and an agent will read all of it.
+//
+// It never prints any part of a value. The report reaches a terminal and a
+// build log, and a report that quoted the value would put it in one more place.
+func writeUnrecognised(out io.Writer, p *migrate.Plan, root string) {
+	list := p.Unrecognised()
+	if len(list) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\n%d value(s) stay in the file, and no rule knows what they are.\n"+
+		"An agent reads each of these in full. Read them yourself first:\n", len(list))
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	last := ""
+	for _, u := range list {
+		rel, err := filepath.Rel(root, u.Path)
+		if err != nil {
+			rel = u.Path
+		}
+		if rel != last {
+			fmt.Fprintf(w, "  %s\n", rel)
+			last = rel
+		}
+		fmt.Fprintf(w, "    %s\t%s\n", u.Key, u.Reason)
+	}
+	w.Flush()
+
+	// The instruction has to work with the version the developer is holding.
+	// The name rules are the lever that ships today: a name that says the
+	// value is a secret makes the tool veil it, and the name travels with the
+	// file, so everybody who clones the project gets the same result.
+	fmt.Fprintf(out, "\nIf one of these is a secret, rename the variable so that its name says so\n"+
+		"(for example %s), then run \"secretveil init\" again.\n"+
+		"If none of them is, nothing needs to change.\n", list[0].Key+"_SECRET")
 }
 
 func writeProjection(out io.Writer, p *migrate.Plan) {

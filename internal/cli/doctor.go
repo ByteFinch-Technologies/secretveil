@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ByteFinch-Technologies/secretveil/internal/classify"
 	"github.com/ByteFinch-Technologies/secretveil/internal/coverage"
 	"github.com/ByteFinch-Technologies/secretveil/internal/detect"
 	"github.com/ByteFinch-Technologies/secretveil/internal/envfile"
@@ -48,9 +47,10 @@ func (l level) mark() string {
 
 // scopeNote states the limit of the report. It prints under every summary,
 // including a clean one, because a developer reads the last line and stops.
-const scopeNote = "These checks read the .env files, the .npmrc files, the store and a short list\n" +
-	"of known credential files. A secret in any other kind of file is not covered\n" +
-	"and was not looked at."
+const scopeNote = "One check searches every file under this project for a value that the store\n" +
+	"already holds. Every other check reads the .env files, the .npmrc files, the\n" +
+	"store and a short list of known credential files. A secret that is in none of\n" +
+	"those, and that the store has never held, was not looked at."
 
 // finding is one line of the report.
 type finding struct {
@@ -68,8 +68,13 @@ func newDoctor() *cobra.Command {
 later. It writes nothing and it changes nothing.
 
 It checks that the store opens on this machine, that every reference in your
-.env and .npmrc files has a value behind it, that no plaintext secret is left in
-a file, that .gitignore covers the store, and that the policy file loads.
+.env and .npmrc files has a value behind it, that no file still holds a value
+that the store already holds, that .gitignore covers the store, and that the
+policy file loads.
+
+It also names a value that stayed in the file and that reads like a credential
+even though no rule recognised it. That one is a question for you, not a fault,
+so it never changes the exit code.
 
 It also names a credential in a file that secretveil does not rewrite, such as
 .netrc or .yarnrc.yml. It cannot protect those files, and it says so rather than
@@ -145,7 +150,10 @@ func runChecks(ctx context.Context, root string) []finding {
 		return found
 	}
 
-	add(checkPlaintext(plan))
+	for _, f := range checkPlaintext(ctx, root, file, refs, plan) {
+		add(f)
+	}
+	add(checkUnrecognised(root, plan))
 	add(checkUncovered(root, plan))
 	add(checkUnread(root))
 	used := handlesInFiles(root)
@@ -193,28 +201,112 @@ func checkStore(root string, file *agefile.Store) finding {
 	return finding{levelOK, "the store opens on this machine", nil}
 }
 
-// checkPlaintext is the check that matters most. A value that an agent can read
-// makes the rest of the tool beside the point.
-func checkPlaintext(plan *migrate.Plan) finding {
-	var where []string
+// checkPlaintext is the check that matters most. A value that an agent can
+// read makes the rest of the tool beside the point.
+//
+// It reads the values out of the store and then searches the files for them.
+// It does not ask the classifier. The classifier is the thing that can be
+// wrong, so a check that read its answer reported a clean project for exactly
+// the one fault it existed to find: a value no rule recognised was called open,
+// and "open" was then read as "this is not a secret". The same circle was found
+// once before in checkUncovered.
+//
+// The search returns two kinds of place, and they are not the same fault. A
+// value inside a file that secretveil rewrites is a fault of this tool, and it
+// is BAD. A value in some other file is a fault of the project that this tool
+// cannot fix, and it is a warning, so that a project which keeps a fixture file
+// does not fail this check forever.
+func checkPlaintext(ctx context.Context, root string, file *agefile.Store,
+	refs []string, plan *migrate.Plan) []finding {
+
+	if len(refs) == 0 {
+		return []finding{{levelNote, "the store holds no value, so there is nothing to search for", nil}}
+	}
+	secrets := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		v, err := file.Get(ctx, ref)
+		if err != nil {
+			return []finding{{levelWarn,
+				"the search for plaintext did not run, because " + ref + " did not open: " + err.Error(), nil}}
+		}
+		secrets[ref] = v
+	}
+
+	found, err := migrate.SearchTree(root, secrets)
+	if err != nil {
+		return []finding{{levelWarn, "the search for plaintext did not finish: " + err.Error(), nil}}
+	}
+
+	covered := map[string]bool{}
 	for _, f := range plan.Files {
-		for _, e := range f.Entries {
-			if e.Decision.Class != classify.Open {
-				where = append(where, fmt.Sprintf("%s holds the value of %s", relTo(plan.Root, f.Path), e.Key))
-			}
+		covered[f.Path] = true
+	}
+	var inCovered, elsewhere []string
+	for _, l := range found {
+		line := fmt.Sprintf("%s, line %d: this holds the value behind %s",
+			relTo(root, l.Path), l.Line, handle.Scheme+l.Ref)
+		if covered[l.Path] {
+			inCovered = append(inCovered, line)
+		} else {
+			elsewhere = append(elsewhere, line)
 		}
 	}
-	if len(where) == 0 {
-		return finding{levelOK, "no .env or .npmrc file holds a plaintext secret", nil}
+
+	out := make([]finding, 0, 2)
+	if len(inCovered) == 0 {
+		out = append(out, finding{levelOK, "no file that secretveil rewrites holds a value from the store", nil})
+	} else {
+		out = append(out, finding{levelBad,
+			fmt.Sprintf("%d plaintext secret(s) are still in the files an agent reads", len(inCovered)),
+			append(trimList(inCovered), "Run \"secretveil init\" to move them into the store.")})
 	}
-	if len(where) > 8 {
-		rest := len(where) - 8
-		where = append(where[:8], fmt.Sprintf("and %d more", rest))
+	if len(elsewhere) > 0 {
+		out = append(out, finding{levelWarn,
+			fmt.Sprintf("%d other file(s) hold a value that is also in the store", len(elsewhere)),
+			append(trimList(elsewhere),
+				"secretveil does not rewrite these files. Remove the value by hand, or rotate it.")})
 	}
-	return finding{levelBad,
-		fmt.Sprintf("%d plaintext secrets are still in the files an agent reads", len(where)),
-		append(where, "Run \"secretveil init\" to move them into the store."),
+	return out
+}
+
+// checkUnrecognised reports a value that stayed in the file and that still
+// reads like a credential.
+//
+// The level is a warning and not a fault, so the exit code stays 0. This check
+// reports a doubt and not a finding, and a doubt that fails a build is a doubt
+// that somebody switches off. It is also the one check whose right answer can
+// be "no", which is why it never asks the developer to prove anything.
+func checkUnrecognised(root string, plan *migrate.Plan) finding {
+	list := plan.Unrecognised()
+	if len(list) == 0 {
+		return finding{levelOK, "every open value is one that a rule recognised", nil}
 	}
+	detail := make([]string, 0, len(list)+2)
+	for _, u := range list {
+		detail = append(detail, fmt.Sprintf("%s, %s: %s", relTo(root, u.Path), u.Key, u.Reason))
+	}
+	detail = trimList(detail)
+	detail = append(detail,
+		"An agent reads each of these in full, because no rule knows what they are.",
+		"If one is a secret, rename the variable so that its name says so (for example "+
+			list[0].Key+"_SECRET), then run \"secretveil init\" again.")
+	return finding{levelWarn,
+		fmt.Sprintf("%d value(s) stay open and no rule knows what they are", len(list)),
+		detail}
+}
+
+// maxListed is how many places one finding names. A report that prints two
+// hundred lines is a report that nobody reads to the end.
+const maxListed = 8
+
+// trimList shortens a list and says how much it took away. It never hides the
+// count, because the count is in the title of the finding.
+func trimList(lines []string) []string {
+	if len(lines) <= maxListed {
+		return lines
+	}
+	rest := len(lines) - maxListed
+	return append(lines[:maxListed:maxListed], fmt.Sprintf("and %d more", rest))
 }
 
 // checkUncovered names a credential that secretveil does not put a handle into.

@@ -465,6 +465,52 @@ func isLowerOrDigit(c byte) bool {
 // its entropy.
 func Alphabet(value string) (int, bool) { return tokenAlphabet(value) }
 
+// ReadsAsWords reports whether a value reads as something a person wrote: a
+// path, or a name that is made of words.
+//
+// The randomness rule refuses both of these before it veils, because a long
+// setting is not a token. A caller that reports an unrecognised value needs
+// the same answer, and it must get it from the same code. Two copies of this
+// test would drift apart, and the copy that drifted would report a file path
+// on every run until somebody switched the report off.
+func ReadsAsWords(value string) bool {
+	return looksLikePath(value) || looksLikeIdentifier(value) || lowerWords(value)
+}
+
+// lowerWords reports whether a value is made only of lower case words.
+//
+// A media type such as application/json comes apart into two parts, and the
+// identifier rule needs three before it will call a value written. Two is too
+// few for that rule, because a random token that happens to break in two would
+// then read as a name.
+//
+// Lower case letters alone are safe where a mixed alphabet is not. Twenty six
+// symbols carry 4.7 bits each, so a value of this shape cannot reach the
+// eighty bits that the randomness rule needs until it is eighteen characters
+// long, and a token of eighteen lower case letters and no digit at all is a
+// coincidence of about one in a million.
+//
+// This rule is only ever read by ReadsAsWords, so it can only silence a report.
+// It is not part of LooksRandom and it cannot open a value that would
+// otherwise be veiled.
+func lowerWords(value string) bool {
+	parts := identifierParts(value)
+	if len(parts) < 2 {
+		return false
+	}
+	for _, p := range parts {
+		if len(p) < 3 {
+			return false
+		}
+		for i := 0; i < len(p); i++ {
+			if c := p[i]; c < 'a' || c > 'z' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // LabelledToken finds a random token that a plain label introduces.
 //
 // A Telegram bot credential is written as 123456789:AAHdqTcvCH1vGWJ..., where

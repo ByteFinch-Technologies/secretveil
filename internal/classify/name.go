@@ -116,7 +116,10 @@ func init() {
 	// A hash of a credential is not the credential. The value has to be a
 	// hash: PASSWORD_HASH=$2b$12$... is a bcrypt digest, not hexadecimal, so
 	// this term does not open it.
-	add(kindHash, false, `SHA HASH COMMIT REVISION REV DIGEST CHECKSUM ETAG FINGERPRINT`)
+	add(kindHash, false, `
+		SHA SHA1 SHA256 SHA512 MD5 HASH COMMIT REVISION REV DIGEST CHECKSUM ETAG
+		FINGERPRINT INTEGRITY SRI
+	`)
 }
 
 // nameVerdict is what the name rules concluded.
@@ -164,7 +167,13 @@ const (
 )
 
 // readName applies the name rules to one key and value.
-func readName(key, value string) nameVerdict {
+//
+// The second result is the kind that the term which decided put on the value.
+// A kind other than kindAny was checked against the value, so the name did not
+// only assert something, it proved it. The review report reads this: a term
+// that proved itself needs no second look, and a term that put no requirement
+// on the value proves nothing about the value.
+func readName(key, value string) (nameVerdict, termKind) {
 	segs := segments(key)
 
 	// A secret word anywhere in the name blocks every term whose beats field
@@ -184,19 +193,19 @@ func readName(key, value string) nameVerdict {
 	sawTerm := false
 	for i := len(segs) - 1; i >= 0; i-- {
 		if i > 0 {
-			if v, ok := readTerm(segs[i-1]+"_"+segs[i], value, anySecret, &sawTerm); ok {
-				return v
+			if v, k, ok := readTerm(segs[i-1]+"_"+segs[i], value, anySecret, &sawTerm); ok {
+				return v, k
 			}
 		}
-		if v, ok := readTerm(singular(segs[i]), value, anySecret, &sawTerm); ok {
-			return v
+		if v, k, ok := readTerm(singular(segs[i]), value, anySecret, &sawTerm); ok {
+			return v, k
 		}
 	}
 	if anySecret {
-		return nameSecret
+		return nameSecret, kindAny
 	}
 	if sawTerm {
-		return nameSilent
+		return nameSilent, kindAny
 	}
 
 	// Nothing in the name is a word this tool knows. Only now is a secret word
@@ -206,29 +215,29 @@ func readName(key, value string) nameVerdict {
 	upper := strings.ToUpper(key)
 	for term := range secretTerms {
 		if len(term) >= 4 && !strings.Contains(term, "_") && strings.Contains(upper, term) {
-			return nameSecret
+			return nameSecret, kindAny
 		}
 	}
-	return nameSilent
+	return nameSilent, kindAny
 }
 
-// readTerm reads one term. The second result says whether the term decided.
-func readTerm(term, value string, anySecret bool, sawTerm *bool) (nameVerdict, bool) {
+// readTerm reads one term. The last result says whether the term decided.
+func readTerm(term, value string, anySecret bool, sawTerm *bool) (nameVerdict, termKind, bool) {
 	if secretTerms[term] {
-		return nameSecret, true
+		return nameSecret, kindAny, true
 	}
 	c, ok := configTerms[term]
 	if !ok {
-		return nameSilent, false
+		return nameSilent, kindAny, false
 	}
 	*sawTerm = true
 	if !valueIs(c.kind, value) {
-		return nameSilent, false
+		return nameSilent, kindAny, false
 	}
 	if !c.beats && anySecret {
-		return nameSilent, false
+		return nameSilent, kindAny, false
 	}
-	return nameConfig, true
+	return nameConfig, c.kind, true
 }
 
 // segments splits a variable name into words.

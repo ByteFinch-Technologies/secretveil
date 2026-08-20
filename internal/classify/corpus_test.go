@@ -296,7 +296,7 @@ func renderDecisions(rows []corpus.Row) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# classifier version %d\n", classify.Version)
 	b.WriteString("# The decision for every corpus row. Regenerate with -update.\n")
-	b.WriteString("# want key class rule result\n")
+	b.WriteString("# want key class rule result review\n")
 	for _, r := range rows {
 		d := classify.Classify(r.Key, r.Value)
 		result := "held"
@@ -306,7 +306,11 @@ func renderDecisions(rows []corpus.Row) string {
 		case r.Want == corpus.Open && d.Class != classify.Open:
 			result = "false-veil"
 		}
-		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\n", r.Want, r.Key, d.Class, d.Rule, result)
+		review := "-"
+		if d.Review {
+			review = "review"
+		}
+		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Want, r.Key, d.Class, d.Rule, result, review)
 	}
 	return b.String()
 }
@@ -317,13 +321,13 @@ func lessSafeReport(oldText, newText string) string {
 	oldLines := strings.Split(oldText, "\n")
 	newLines := strings.Split(newText, "\n")
 	var b strings.Builder
-	worse, better, n := 0, 0, 0
+	worse, better, quieter, n := 0, 0, 0, 0
 	for i := range newLines {
 		if i >= len(oldLines) || strings.HasPrefix(newLines[i], "#") || newLines[i] == "" {
 			continue
 		}
 		o, w := strings.Split(oldLines[i], "\t"), strings.Split(newLines[i], "\t")
-		if len(o) != 5 || len(w) != 5 || o[1] != w[1] {
+		if len(o) != 6 || len(w) != 6 || o[1] != w[1] {
 			continue
 		}
 		switch {
@@ -335,9 +339,19 @@ func lessSafeReport(oldText, newText string) string {
 			}
 		case o[4] == "LEAKS" && w[4] != "LEAKS", rank[w[2]] > rank[o[2]]:
 			better++
+		// A row that stayed open and lost its review mark is not less safe,
+		// because the class did not move. It is less visible, which is the
+		// other way a value reaches an agent without anybody reading it.
+		case o[5] == "review" && w[5] != "review":
+			quieter++
+			if n < 40 {
+				n++
+				fmt.Fprintf(&b, "NO LONGER REPORTED  %s  %s -> %s\n", w[1], o[3], w[3])
+			}
 		}
 	}
-	fmt.Fprintf(&b, "\n%d lines became less safe and %d became safer.\n", worse, better)
+	fmt.Fprintf(&b, "\n%d lines became less safe, %d became safer, %d are no longer reported.\n",
+		worse, better, quieter)
 	return b.String()
 }
 
