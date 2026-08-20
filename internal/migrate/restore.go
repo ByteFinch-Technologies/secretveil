@@ -137,12 +137,16 @@ func restoreDotenv(root string, res *RestoreResult, lookup func(string) (string,
 			// line that this loop holds, so a count after it reads the new
 			// value twice and always gives zero.
 			replaced := strings.Count(line.Value, handle.Scheme) - strings.Count(out, handle.Scheme)
-			parsed.Set(line.Key, out)
+			// The write goes to this record and not to the key. A file may
+			// name the same key twice, and writing by key put both values on
+			// the last record and left the first handle unresolved.
+			hadShape := strings.Contains(line.Inline, shapeMark)
+			line.Set(out)
 			// The shape comment described the handle. The value is back, so
 			// the comment has no meaning any more. A comment that the
 			// developer wrote stays, because it is not ours to remove.
-			if strings.Contains(line.Inline, shapeMark) {
-				parsed.SetInline(line.Key, "")
+			if hadShape {
+				line.SetInline("")
 			}
 			res.Handles += replaced
 			changed = true
