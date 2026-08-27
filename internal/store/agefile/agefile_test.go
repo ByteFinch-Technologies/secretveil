@@ -446,3 +446,22 @@ func containsRef(refs []string, want string) bool {
 	}
 	return false
 }
+
+// TestRestoreNilSnapshotMakesNoDirectory holds the lock away from the remove
+// path. The write lock sits on the store directory, and a lock needs the
+// directory to exist. A restore of a nil snapshot removes the store, and it
+// must leave the disk as it found it.
+func TestRestoreNilSnapshotMakesNoDirectory(t *testing.T) {
+	s, _, path := newTestStore(t)
+	dir := filepath.Dir(path)
+
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the test needs a directory that is absent, stat gave %v", err)
+	}
+	if err := s.RestoreSnapshot(nil); err != nil {
+		t.Fatalf("a restore of a nil snapshot must succeed, it gave %v", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the restore made %s, and it must not", dir)
+	}
+}

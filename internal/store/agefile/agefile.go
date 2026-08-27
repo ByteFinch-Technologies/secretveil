@@ -324,16 +324,28 @@ func syncDir(dir string) error {
 // The cache goes inside the lock, because a store that loaded before the lock
 // holds what the other process has since replaced. The read that fn does is
 // then a read of the file as it is now.
-func (s *Store) withWriteLock(fn func() error) error {
+// createDir tells the function to make the store directory when it is absent.
+// A call that writes the store needs the directory. A call that only removes
+// the store must not make one, because a remove of a store that was never
+// written must leave the disk as it was.
+func (s *Store) withWriteLock(createDir bool, fn func() error) error {
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	if createDir {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
 	}
 	unlock, err := lockDir(dir)
-	if err != nil {
+	switch {
+	case err == nil:
+		defer unlock()
+	case !createDir && errors.Is(err, os.ErrNotExist):
+		// There is no directory, so there is no store file, and no other
+		// process can hold the lock of a directory that does not exist. Go on
+		// without the lock.
+	default:
 		return err
 	}
-	defer unlock()
 
 	s.loaded = false
 	s.values = nil
@@ -360,7 +372,7 @@ func (s *Store) Set(_ context.Context, ref, value string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.withWriteLock(func() error {
+	return s.withWriteLock(true, func() error {
 		if err := s.load(); err != nil {
 			return err
 		}
@@ -380,7 +392,7 @@ func (s *Store) SetMany(_ context.Context, values map[string]string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.withWriteLock(func() error {
+	return s.withWriteLock(true, func() error {
 		if err := s.load(); err != nil {
 			return err
 		}
@@ -408,7 +420,7 @@ func (s *Store) List(_ context.Context) ([]string, error) {
 func (s *Store) Delete(_ context.Context, ref string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.withWriteLock(func() error {
+	return s.withWriteLock(true, func() error {
 		if err := s.load(); err != nil {
 			return err
 		}
@@ -454,7 +466,7 @@ func (s *Store) RestoreSnapshot(snap []byte) error {
 	defer s.mu.Unlock()
 	// withWriteLock drops the cache, which holds values that the snapshot
 	// does not.
-	return s.withWriteLock(func() error {
+	return s.withWriteLock(snap != nil, func() error {
 		if snap == nil {
 			err := os.Remove(s.path)
 			if errors.Is(err, os.ErrNotExist) {
