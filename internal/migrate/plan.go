@@ -54,10 +54,11 @@ type Entry struct {
 	Decision  classify.Decision `json:"decision"`
 	Projected string            `json:"projected"`
 	Refs      []string          `json:"refs"`
-	// Line is the 1-based line of the record, for a file kind that is
-	// addressed by position. An .npmrc file may name the same key twice, and a
-	// rewrite that went by name could touch the wrong line and leave the live
-	// token on disk. A zero means the file is addressed by key.
+	// Line is the 1-based line of the record. The tool addresses both file
+	// kinds by position. A file can name the same key twice, and a rewrite
+	// that goes by name could touch the wrong line and leave the live token on
+	// disk. A zero is never valid. entryValue refuses it, and rewriteDotenv
+	// returns an error.
 	Line int `json:"line,omitempty"`
 }
 
