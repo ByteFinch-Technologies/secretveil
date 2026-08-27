@@ -313,6 +313,46 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
+// withWriteLock runs fn while this process holds the only write lock of the
+// store directory, and with a cache that fn must fill again.
+//
+// Two shells can run "secretveil set" at the same moment. Each command reads
+// the whole store, adds one value, and writes the whole store back. Without a
+// lock between the two processes the second write replaces the first, and one
+// secret is lost with no error, no message and no mark in any file.
+//
+// The cache goes inside the lock, because a store that loaded before the lock
+// holds what the other process has since replaced. The read that fn does is
+// then a read of the file as it is now.
+// createDir tells the function to make the store directory when it is absent.
+// A call that writes the store needs the directory. A call that only removes
+// the store must not make one, because a remove of a store that was never
+// written must leave the disk as it was.
+func (s *Store) withWriteLock(createDir bool, fn func() error) error {
+	dir := filepath.Dir(s.path)
+	if createDir {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	unlock, err := lockDir(dir)
+	switch {
+	case err == nil:
+		defer unlock()
+	case !createDir && errors.Is(err, os.ErrNotExist):
+		// There is no directory, so there is no store file, and no other
+		// process can hold the lock of a directory that does not exist. Go on
+		// without the lock.
+	default:
+		return err
+	}
+
+	s.loaded = false
+	s.values = nil
+	s.used = nil
+	return fn()
+}
+
 func (s *Store) Get(_ context.Context, ref string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -332,11 +372,13 @@ func (s *Store) Set(_ context.Context, ref, value string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.load(); err != nil {
-		return err
-	}
-	s.values[ref] = value
-	return s.save()
+	return s.withWriteLock(true, func() error {
+		if err := s.load(); err != nil {
+			return err
+		}
+		s.values[ref] = value
+		return s.save()
+	})
 }
 
 // SetMany writes several values in one encryption pass. The init flow uses it,
@@ -350,13 +392,15 @@ func (s *Store) SetMany(_ context.Context, values map[string]string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.load(); err != nil {
-		return err
-	}
-	for ref, v := range values {
-		s.values[ref] = v
-	}
-	return s.save()
+	return s.withWriteLock(true, func() error {
+		if err := s.load(); err != nil {
+			return err
+		}
+		for ref, v := range values {
+			s.values[ref] = v
+		}
+		return s.save()
+	})
 }
 
 func (s *Store) List(_ context.Context) ([]string, error) {
@@ -376,14 +420,16 @@ func (s *Store) List(_ context.Context) ([]string, error) {
 func (s *Store) Delete(_ context.Context, ref string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.load(); err != nil {
-		return err
-	}
-	if _, ok := s.values[ref]; !ok {
-		return nil
-	}
-	delete(s.values, ref)
-	return s.save()
+	return s.withWriteLock(true, func() error {
+		if err := s.load(); err != nil {
+			return err
+		}
+		if _, ok := s.values[ref]; !ok {
+			return nil
+		}
+		delete(s.values, ref)
+		return s.save()
+	})
 }
 
 // Reload drops the cached values, so the next call reads the file again.
@@ -418,17 +464,16 @@ func (s *Store) Snapshot() ([]byte, error) {
 func (s *Store) RestoreSnapshot(snap []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// The cache holds values that the snapshot does not, so it must go.
-	s.loaded = false
-	s.values = nil
-	s.used = nil
-
-	if snap == nil {
-		err := os.Remove(s.path)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+	// withWriteLock drops the cache, which holds values that the snapshot
+	// does not.
+	return s.withWriteLock(snap != nil, func() error {
+		if snap == nil {
+			err := os.Remove(s.path)
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
 		}
-		return err
-	}
-	return writeFileAtomic(s.path, snap)
+		return writeFileAtomic(s.path, snap)
+	})
 }
