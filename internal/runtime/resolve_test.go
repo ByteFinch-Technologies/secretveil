@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,4 +194,52 @@ type countingStore struct {
 func (c *countingStore) Get(ctx context.Context, ref string) (string, error) {
 	c.reads++
 	return c.Mem.Get(ctx, ref)
+}
+
+// badStore is a store that opened with the wrong key. Every read fails, and
+// none of the failures is ErrNotFound.
+type badStore struct{ err error }
+
+func (b badStore) Get(context.Context, string) (string, error) { return "", b.err }
+func (b badStore) Set(context.Context, string, string) error   { return b.err }
+func (b badStore) List(context.Context) ([]string, error)      { return nil, b.err }
+func (b badStore) Delete(context.Context, string) error        { return b.err }
+func (b badStore) Name() string                                { return "bad" }
+func (b badStore) Available() bool                             { return true }
+
+func TestAStoreThatDoesNotReadIsNotAMissingValue(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\nDB_PASSWORD=sv://db_password\n")
+	wrongKey := errors.New("the key does not open this store")
+
+	res, err := Resolve(context.Background(), badStore{err: wrongKey}, Options{Dir: dir, Parent: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both references look missing, because the store answered neither.
+	if len(res.Missing) != 2 {
+		t.Fatalf("Missing holds %d references, want 2", len(res.Missing))
+	}
+	// The cause must survive, so the caller does not tell the developer to
+	// set a value that is already in the store.
+	if !errors.Is(res.Err, wrongKey) {
+		t.Fatalf("Err is %v, want the store fault", res.Err)
+	}
+}
+
+func TestAMissingReferenceIsNotAStoreFault(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\n")
+	st := memStore(t, map[string]string{})
+
+	res, err := Resolve(context.Background(), st, Options{Dir: dir, Parent: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Missing) != 1 {
+		t.Fatalf("Missing holds %d references, want 1", len(res.Missing))
+	}
+	if res.Err != nil {
+		t.Fatalf("Err is %v, want nothing", res.Err)
+	}
 }
