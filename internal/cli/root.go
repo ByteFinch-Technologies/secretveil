@@ -19,8 +19,9 @@ func newRoot() *cobra.Command {
 		Long: `secretveil keeps the plaintext value off disk.
 
 The .env file in your project holds a handle for each secret, so every AI tool
-reads it safely with no integration. The real values live in your OS keychain
-and reach the program through "secretveil run".`,
+reads it safely with no integration. The real values live in an encrypted store
+at .secretveil/secrets.age. The key to that store lives in your OS keyring. The
+values reach the program through "secretveil run".`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

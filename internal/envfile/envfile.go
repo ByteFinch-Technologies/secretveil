@@ -119,43 +119,82 @@ func (f *File) Get(key string) (string, bool) {
 	return value, found
 }
 
-// Set replaces the value of the last assignment of a key and marks it dirty.
-func (f *File) Set(key, value string) bool {
-	index := -1
-	for i := range f.Lines {
-		if f.Lines[i].Kind == Assignment && f.Lines[i].Key == key {
-			index = i
-		}
-	}
-	if index < 0 {
+// Set replaces the value of one record and marks it dirty. It returns false
+// when the record is not an assignment.
+//
+// This is the safe way to write. A file may name the same key twice, and only
+// the record says which of the two values sits on which line.
+func (l *Line) Set(value string) bool {
+	if l.Kind != Assignment {
 		return false
 	}
-	line := &f.Lines[index]
-	line.Value = value
+	l.Value = value
 	// The original quote style is kept, which keeps the diff small. encode
 	// changes the style by itself when the new value cannot survive it.
-	line.dirty = true
+	l.dirty = true
 	return true
 }
 
-// SetInline replaces the trailing comment of a key. An empty comment removes it.
-func (f *File) SetInline(key, comment string) bool {
-	index := -1
-	for i := range f.Lines {
-		if f.Lines[i].Kind == Assignment && f.Lines[i].Key == key {
-			index = i
-		}
-	}
-	if index < 0 {
+// SetInline replaces the trailing comment of one record. An empty comment
+// removes it.
+func (l *Line) SetInline(comment string) bool {
+	if l.Kind != Assignment {
 		return false
 	}
 	if comment == "" {
-		f.Lines[index].Inline = ""
+		l.Inline = ""
 	} else {
-		f.Lines[index].Inline = "    # " + comment
+		l.Inline = "    # " + comment
 	}
-	f.Lines[index].dirty = true
+	l.dirty = true
 	return true
+}
+
+// Set replaces the value of the last assignment of a key and marks it dirty.
+//
+// Careful: a file may name the same key twice, and this writes only the last
+// of them. A caller that must reach every record uses Assignments and Line.Set
+// instead. Writing by key here once left the first of two secret values in the
+// clear, because the rewrite touched the last record twice.
+func (f *File) Set(key, value string) bool {
+	line := f.last(key)
+	if line == nil {
+		return false
+	}
+	return line.Set(value)
+}
+
+// SetInline replaces the trailing comment of a key. An empty comment removes it.
+//
+// The warning on Set applies here as well.
+func (f *File) SetInline(key, comment string) bool {
+	line := f.last(key)
+	if line == nil {
+		return false
+	}
+	return line.SetInline(comment)
+}
+
+// last returns the last assignment of a key, or nil.
+func (f *File) last(key string) *Line {
+	var out *Line
+	for i := range f.Lines {
+		if f.Lines[i].Kind == Assignment && f.Lines[i].Key == key {
+			out = &f.Lines[i]
+		}
+	}
+	return out
+}
+
+// PhysicalLine returns the 1-based line of the file where a record starts. A
+// record with a multi-line quoted value covers more than one physical line, so
+// the index of a record is not the number a person reads in an editor.
+func (f *File) PhysicalLine(index int) int {
+	n := 1
+	for i := 0; i < index && i < len(f.Lines); i++ {
+		n += strings.Count(f.Lines[i].Raw, "\n")
+	}
+	return n
 }
 
 // Assignments returns every assignment record, in file order.

@@ -40,6 +40,13 @@ SPACED = value with spaces
 		"services/worker/.env": "DB_PASSWORD=p4ss-worker-Ab7Cd3Ef\nQUEUE=default\n",
 		"services/web/.env":    "NEXT_PUBLIC_URL=https://example.com\nSESSION_SECRET=sess-Gh4Ij5Kl6Mn7Op8Q\n",
 	},
+	"a file that names one key twice": {
+		".env": `# The first assignment is dead. A loader reads the last one.
+API_KEY=Zx91qLbT4vNs7Kd2FhWm0PjR
+DB_PASSWORD=p4ss-Xy9Lm2Qr-Ab7Cd3
+API_KEY="Ge72uPdA8wFn3Jm5RcVt6Byq"    # the one that wins
+`,
+	},
 	"a file with windows line endings and no final newline": {
 		".env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\r\nPORT=3000\r\nTOKEN=tok_9x8Kd2LmNpQrS4tU",
 	},
