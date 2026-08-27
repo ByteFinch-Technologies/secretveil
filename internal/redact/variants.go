@@ -2,6 +2,7 @@ package redact
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/url"
 	"sort"
@@ -40,6 +41,9 @@ type Result struct {
 // a program often prints a secret after it encodes it. A connection library
 // that reports a failed request may print the credential inside a base64
 // header, and the raw value never appears in that output.
+//
+// The forms are base64 in both alphabets, hex in both cases, the URL escape and
+// the JSON string escape.
 func Build(values map[string]string, opt Options) Result {
 	minLen := opt.MinLen
 	if minLen <= 0 {
@@ -104,18 +108,39 @@ func Encodings(v string) []string {
 	if j, err := json.Marshal(v); err == nil && len(j) >= 2 {
 		keep(string(j[1 : len(j)-1]))
 	}
+	// Hex needs no shift. Each byte becomes two characters on its own, so the
+	// hex of a value is always inside the hex of anything that holds it.
+	h := hex.EncodeToString([]byte(v))
+	keep(h)
+	keep(strings.ToUpper(h))
 	return out
 }
 
 // base64Parts returns the part of the base64 text that holds the value, for
-// each of the three ways the value can sit in the byte stream.
+// each alphabet and for each of the three ways the value can sit in the byte
+// stream.
+//
+// Two alphabets are in use. The standard one ends in "+/". The URL one ends in
+// "-_", and that is the one a JWT uses, and the one that Python
+// urlsafe_b64encode and Node base64url produce. A value encoded with the URL
+// alphabet used to pass the filter untouched.
+func base64Parts(v string) []string {
+	var out []string
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
+		out = append(out, base64PartsIn(v, enc)...)
+	}
+	return out
+}
+
+// base64PartsIn returns the stable middle part of each of the three shifts, in
+// one alphabet.
 //
 // A value inside a larger base64 block does not encode to the same characters
 // as the value on its own. The characters depend on how many bytes come before
 // it. There are three cases, and this returns the stable middle part of each
 // one. The first and the last characters are dropped, because they mix the
 // value with the bytes around it.
-func base64Parts(v string) []string {
+func base64PartsIn(v string, enc *base64.Encoding) []string {
 	var out []string
 	for shift := 0; shift < 3; shift++ {
 		total := shift + len(v)
@@ -126,11 +151,11 @@ func base64Parts(v string) []string {
 		if end <= start {
 			continue
 		}
-		enc := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("\x00", shift) + v))
-		if end > len(enc) {
+		text := enc.EncodeToString([]byte(strings.Repeat("\x00", shift) + v))
+		if end > len(text) {
 			continue
 		}
-		out = append(out, enc[start:end])
+		out = append(out, text[start:end])
 	}
 	return out
 }

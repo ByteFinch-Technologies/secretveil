@@ -58,7 +58,8 @@ released after this was written.
   agent stays useful.
 - **Filters the output of your build.** A value that reaches standard output or standard error
   is replaced with its handle first. This catches the stack trace that prints a connection
-  string. The filter works across chunk boundaries and matches the base64 form.
+  string. The filter works across chunk boundaries and matches the encoded forms,
+  which are base64 in both alphabets, hex, the URL escape and the JSON string escape.
 - **Refuses the cheap environment dump.** `bash -c printenv` and its relatives are refused for
   an agent caller, and the refusal goes into a local audit log that never holds a value.
 - **Reversible, byte for byte.** `secretveil restore` undoes `init` exactly. The test

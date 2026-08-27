@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"filippo.io/age"
@@ -334,5 +336,132 @@ func TestNoTemporaryFileIsLeftBehind(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Errorf("want exactly one file in the directory, got %d", len(entries))
+	}
+}
+
+// TestTheDirectorySyncReportsItsFault guards the last step of the atomic
+// write. A directory sync that cannot run must return the fault, and not
+// report a write that may not have reached the disk.
+func TestTheDirectorySyncReportsItsFault(t *testing.T) {
+	if err := syncDir(filepath.Join(t.TempDir(), "no-such-directory")); err == nil {
+		t.Error("a missing directory gave no error")
+	}
+}
+
+// TestAWriteReachesTheDiskDirectory runs the whole atomic write and reads the
+// value back from a new store, so the rename and the directory sync both run.
+func TestAWriteReachesTheDiskDirectory(t *testing.T) {
+	ctx := context.Background()
+	s, _, _ := newTestStore(t)
+	if err := s.Set(ctx, "api_key", "Zx91qLbT4vNs7Kd2FhWm0PjR"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "api_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Zx91qLbT4vNs7Kd2FhWm0PjR" {
+		t.Errorf("the value is %q", got)
+	}
+}
+
+// TestASecondWriterDoesNotLoseTheFirstValue is the test for the lost write.
+//
+// Two shells that run "secretveil set" at the same moment are two writers of
+// one file. Each one reads the whole store, adds one value and writes the
+// whole store back. Each Store value here stands for one of those processes,
+// and the advisory lock is on the directory, so two Store values in one test
+// contend exactly as two processes do.
+func TestASecondWriterDoesNotLoseTheFirstValue(t *testing.T) {
+	ctx := context.Background()
+	first, ring, path := newTestStore(t)
+	if err := first.Set(ctx, "start", "Zx91qLbT4vNs7Kd2FhWm0PjR"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The second writer reads the store before the first writer changes it,
+	// which is what a second shell does when it starts.
+	second := New(path, ring, "test.identity")
+	if _, err := second.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := first.Set(ctx, "from_first", "Ge72uPdA8wFn3Jm5RcVt6Byq"); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Set(ctx, "from_second", "Kp38sHnE5vLq7Wm2XbTy9Cdr"); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := New(path, ring, "test.identity")
+	refs, err := fresh.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"start", "from_first", "from_second"} {
+		if !containsRef(refs, want) {
+			t.Errorf("the store lost %q. It holds %v", want, refs)
+		}
+	}
+}
+
+// TestEveryConcurrentWriteSurvives runs the writers at the same time.
+func TestEveryConcurrentWriteSurvives(t *testing.T) {
+	ctx := context.Background()
+	_, ring, path := newTestStore(t)
+	const writers = 8
+
+	var wg sync.WaitGroup
+	errs := make([]error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			w := New(path, ring, "test.identity")
+			errs[i] = w.Set(ctx, fmt.Sprintf("ref_%d", i), fmt.Sprintf("value_%d", i))
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("writer %d failed: %v", i, err)
+		}
+	}
+	fresh := New(path, ring, "test.identity")
+	refs, err := fresh.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != writers {
+		t.Errorf("the store holds %d references, want %d. It holds %v", len(refs), writers, refs)
+	}
+}
+
+func containsRef(refs []string, want string) bool {
+	for _, r := range refs {
+		if r == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRestoreNilSnapshotMakesNoDirectory holds the lock away from the remove
+// path. The write lock sits on the store directory, and a lock needs the
+// directory to exist. A restore of a nil snapshot removes the store, and it
+// must leave the disk as it found it.
+func TestRestoreNilSnapshotMakesNoDirectory(t *testing.T) {
+	s, _, path := newTestStore(t)
+	dir := filepath.Dir(path)
+
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the test needs a directory that is absent, stat gave %v", err)
+	}
+	if err := s.RestoreSnapshot(nil); err != nil {
+		t.Fatalf("a restore of a nil snapshot must succeed, it gave %v", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the restore made %s, and it must not", dir)
 	}
 }

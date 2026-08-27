@@ -4,9 +4,15 @@
 // The log answers one question after the fact: what did the agent do while I
 // was not watching? It stays on the machine. Nothing is sent anywhere.
 //
-// The log never holds a secret value. It holds the reference name, which is a
-// label, and the shape of what happened. A log that holds values would be one
-// more plaintext file to protect, and the whole product exists to remove those.
+// The log holds the reference name, which is a label, and the shape of what
+// happened. A log that holds values would be one more plaintext file to
+// protect, and the whole product exists to remove those.
+//
+// A command line is the one field that can carry anything, so it gets two
+// controls. Every value that came out of the store is named through Hide and
+// removed with certainty. Everything else is a guess, because the log cannot
+// know what the words in a command mean. The guess is wide on purpose. See
+// Redact.
 package audit
 
 import (
@@ -15,6 +21,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/redact"
+	"github.com/ByteFinch-Technologies/secretveil/internal/shape"
 )
 
 // FileName is the log inside the .secretveil directory.
@@ -61,6 +70,8 @@ type Record struct {
 // Logger appends records to the log of one project.
 type Logger struct {
 	path string
+	// never holds values that must never reach the log. See Hide.
+	never []string
 	// off is true when the project has no .secretveil directory. Then the log
 	// does nothing, because a log file is not a reason to make a directory in
 	// somebody's project.
@@ -76,6 +87,23 @@ func New(root string) *Logger {
 	return &Logger{path: filepath.Join(dir, FileName)}
 }
 
+// Hide names values that must never reach the log.
+//
+// A command line is guessed at, because the log cannot know what the words in
+// it mean. A resolved secret needs no guess: run holds the plaintext of every
+// value it took out of the store, so it can name them here and the log removes
+// them with certainty. A guess stays in place for everything else.
+//
+// A value shorter than the filter floor is left out. A short value matches too
+// much other text, and a log full of "[hidden]" answers no question.
+func (l *Logger) Hide(values map[string]string) {
+	for _, v := range values {
+		if len(v) >= redact.DefaultMinLen {
+			l.never = append(l.never, v)
+		}
+	}
+}
+
 // Write appends one record.
 //
 // A failure to write the log is returned but it is not fatal to the caller. A
@@ -87,7 +115,7 @@ func (l *Logger) Write(r Record) error {
 	if r.Time.IsZero() {
 		r.Time = time.Now().UTC()
 	}
-	r.Command = Redact(r.Command)
+	r.Command = redactWith(r.Command, l.never)
 
 	body, err := json.Marshal(r)
 	if err != nil {
@@ -102,24 +130,36 @@ func (l *Logger) Write(r Record) error {
 	return err
 }
 
+// hidden is what stands in the log in place of a value.
+const hidden = "[hidden]"
+
 // Redact removes what looks like a secret from a command line before it is
 // written down.
 //
 // A command line is not safe to log. A developer types
 // "curl -H 'Authorization: Bearer sk-live-...'" and the value is now in the
-// log. This is a guess and not a proof, so it is deliberately wide: anything
-// that follows a flag whose name sounds like a credential goes, and so does any
+// log. This is a guess and not a proof, so it is deliberately wide. Four
+// shapes go: a word that follows a flag whose name sounds like a credential,
+// the credential inside a URL, a word whose own shape reads as random, and any
 // long run of characters with no space in it.
-func Redact(args []string) []string {
+func Redact(args []string) []string { return redactWith(args, nil) }
+
+// redactWith removes the known values and then guesses at the rest.
+//
+// The known values go first. A certain rule must not lose to a heuristic.
+func redactWith(args []string, never []string) []string {
 	if len(args) == 0 {
 		return nil
 	}
 	out := make([]string, len(args))
 	hide := false
 	for i, a := range args {
+		for _, v := range never {
+			a = strings.ReplaceAll(a, v, hidden)
+		}
 		switch {
 		case hide:
-			out[i] = "[hidden]"
+			out[i] = hidden
 			hide = false
 		case looksLikeSecretFlag(a):
 			out[i] = a
@@ -129,7 +169,7 @@ func Redact(args []string) []string {
 		}
 		// A flag joined to its value with an equals sign hides the value only.
 		if j := strings.IndexByte(out[i], '='); j > 0 && looksLikeSecretFlag(out[i][:j]) {
-			out[i] = out[i][:j] + "=[hidden]"
+			out[i] = out[i][:j] + "=" + hidden
 			hide = false
 		}
 	}
@@ -175,10 +215,12 @@ func redactInside(a string) string {
 			armed = true
 			b.WriteString(word)
 		case armed, len(word) > 40:
-			b.WriteString("[hidden]")
+			b.WriteString(hidden)
 			changed = true
 		default:
-			b.WriteString(word)
+			w, hit := redactWord(word)
+			b.WriteString(w)
+			changed = changed || hit
 		}
 		i = j
 	}
@@ -190,6 +232,88 @@ func redactInside(a string) string {
 }
 
 func isSpace(c byte) bool { return c == ' ' || c == '\t' }
+
+// redactWord hides a credential that stands on its own, with no flag to name
+// it.
+//
+// Two shapes reach a command line that way. A URL carries the credential
+// inside itself, in the user information or in a query parameter. A bare token
+// is typed as a positional argument, and then only its own shape says what it
+// is.
+func redactWord(word string) (string, bool) {
+	if out, hit := hideInURL(word); hit {
+		return out, true
+	}
+	// LooksRandom is the same test that decides whether init veils a value. A
+	// value the classifier would call a secret must not stay in the log.
+	if shape.LooksRandom(word) {
+		return hidden, true
+	}
+	return word, false
+}
+
+// hideInURL hides a credential that sits inside a URL.
+//
+// Only the value goes. The rest of the URL stays, because
+// "postgres://app:[hidden]@db/orders" tells the reader which database the
+// command reached, and "[hidden]" alone does not.
+func hideInURL(word string) (string, bool) {
+	i := strings.Index(word, "://")
+	if i < 0 {
+		return word, false
+	}
+	out, hit := word, false
+
+	// The authority runs from after the scheme to the first "/", "?" or "#".
+	// Look for the "@" inside the authority only. A later "@" belongs to the
+	// path or to the query, and it names no credential.
+	//
+	// Inside the authority the user information runs to the LAST "@", because
+	// a password can hold an "@" of its own. It holds a password only when it
+	// also holds a ":".
+	rest := out[i+3:]
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	if at := strings.LastIndexByte(rest[:end], '@'); at > 0 {
+		if c := strings.IndexByte(rest[:at], ':'); c >= 0 {
+			out = out[:i+3] + rest[:c+1] + hidden + rest[at:]
+			hit = true
+		}
+	}
+
+	// A query parameter carries the other form.
+	q := strings.IndexByte(out, '?')
+	if q < 0 {
+		return out, hit
+	}
+	parts := strings.Split(out[q+1:], "&")
+	for k, part := range parts {
+		e := strings.IndexByte(part, '=')
+		if e <= 0 || !namesCredential(part[:e]) {
+			continue
+		}
+		parts[k] = part[:e+1] + hidden
+		hit = true
+	}
+	return out[:q+1] + strings.Join(parts, "&"), hit
+}
+
+// namesCredential reports whether the name of a flag or of a query parameter
+// says that its value is a credential.
+//
+// The test is a containment test, because a name is short and specific.
+// "access_token" and "apiKey" both have to match.
+func namesCredential(name string) bool {
+	low := strings.ToLower(name)
+	for _, w := range secretWords {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
 
 // armsRedaction reports whether a word names a credential.
 //
@@ -224,16 +348,11 @@ func looksLikeSecretFlag(a string) bool {
 	if !strings.HasPrefix(a, "-") {
 		return false
 	}
-	low := strings.ToLower(strings.TrimLeft(a, "-"))
-	if i := strings.IndexByte(low, '='); i > 0 {
-		low = low[:i]
+	name := strings.TrimLeft(a, "-")
+	if i := strings.IndexByte(name, '='); i > 0 {
+		name = name[:i]
 	}
-	for _, w := range secretWords {
-		if strings.Contains(low, w) {
-			return true
-		}
-	}
-	return false
+	return namesCredential(name)
 }
 
 // Read returns every record in the log, oldest first.
