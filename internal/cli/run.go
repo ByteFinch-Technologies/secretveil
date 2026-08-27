@@ -105,6 +105,15 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 			if err != nil {
 				return err
 			}
+			// The log must never hold a value. Every value that came out of
+			// the store is named here, so the log removes it with certainty
+			// and does not have to guess at it.
+			//
+			// The hide list goes in before the first return below. A command
+			// that stops on an error still writes to the log, and the list
+			// must already be there when it does.
+			log.Hide(res.Values)
+
 			// A store that does not open makes every reference look missing.
 			// The advice to set a value is wrong then, and it sends the
 			// developer to write a value that is already there.
