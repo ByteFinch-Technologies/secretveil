@@ -175,17 +175,13 @@ func Apply(ctx context.Context, st SecretStore, opt Options) (*Result, error) {
 	if len(plan.Files) == 0 {
 		return nil, errors.New("there is no .env or .npmrc file with values here")
 	}
+	// The names are settled before the values are read. resolveCollisions
+	// needs the plan and not the values, and reading once under the final
+	// names lets Secrets hold every reference to one value.
+	renamed := resolveCollisions(plan, root)
 	secrets, err := plan.Secrets(os.ReadFile)
 	if err != nil {
 		return nil, fmt.Errorf("the phase %q failed: %w", PhasePlan, err)
-	}
-	renamed := resolveCollisions(plan, root)
-	if len(renamed) > 0 {
-		// The names changed, so read the values again under the new names.
-		secrets, err = plan.Secrets(os.ReadFile)
-		if err != nil {
-			return nil, fmt.Errorf("the phase %q failed: %w", PhasePlan, err)
-		}
 	}
 	res := &Result{Plan: plan, Refs: sortedKeys(secrets), Renamed: renamed}
 	logf(PhasePlan, "%d file(s), %d secret(s)", len(plan.Files), len(secrets))
@@ -347,20 +343,32 @@ func rewriteNpmrc(src []byte, f FilePlan) ([]byte, bool, error) {
 }
 
 // rewriteDotenv puts an sv:// handle in place of each secret.
+//
+// Each entry names a record and not a key, for the same reason the .npmrc
+// rewrite does: a .env file may name the same key twice. A rewrite that went
+// by name wrote the last record once for every entry of that key, so the first
+// record kept its secret in the clear and no later check ever saw it.
 func rewriteDotenv(src []byte, f FilePlan) ([]byte, bool, error) {
 	parsed := envfile.Parse(src)
-	inline := map[string]string{}
-	for _, line := range parsed.Assignments() {
-		inline[line.Key] = line.Inline
-	}
-
 	changed := false
 	for _, e := range f.Entries {
 		if e.Decision.Class == classify.Open {
 			continue
 		}
-		if !parsed.Set(e.Key, e.Projected) {
-			return nil, false, fmt.Errorf("the key %s is gone from the file", e.Key)
+		if e.Line < 1 || e.Line > len(parsed.Lines) {
+			return nil, false, fmt.Errorf("the record for %s is gone from the file", e.Key)
+		}
+		line := &parsed.Lines[e.Line-1]
+		if line.Kind != envfile.Assignment || line.Key != e.Key {
+			return nil, false, fmt.Errorf("line %d now holds %q and not %q",
+				parsed.PhysicalLine(e.Line-1), line.Key, e.Key)
+		}
+		// The comment is read before the write. Set changes only the value, so
+		// this still reports what the developer wrote.
+		hadComment := strings.TrimSpace(line.Inline) != ""
+		if !line.Set(e.Projected) {
+			return nil, false, fmt.Errorf("the value of %s on line %d could not be replaced",
+				e.Key, parsed.PhysicalLine(e.Line-1))
 		}
 		// The shape comment tells a reader, and an AI tool, what kind of value
 		// the handle stands for. It holds no part of the value itself.
@@ -368,8 +376,8 @@ func rewriteDotenv(src []byte, f FilePlan) ([]byte, bool, error) {
 		// A line that already has a comment keeps it. The comment belongs to
 		// the developer, and restore must be able to give back the file it
 		// started from, byte for byte.
-		if strings.TrimSpace(inline[e.Key]) == "" {
-			parsed.SetInline(e.Key, e.Decision.Shape.Comment())
+		if !hadComment {
+			line.SetInline(e.Decision.Shape.Comment())
 		}
 		changed = true
 	}

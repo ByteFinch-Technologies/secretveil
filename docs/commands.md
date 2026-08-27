@@ -67,6 +67,11 @@ Two files that hold the same key make a name collision. `init` renames the secon
 the file it came from, so `.env.development` gives `env_development_api_key`, and it prints
 each rename it made.
 
+One file that names the same key twice is the same case. A loader reads the last assignment,
+so the first one is dead text, but it still holds whatever the developer put there. `init`
+gives each record its own name and rewrites both, so no value stays in the file. Two records
+that hold the same value keep one name, because one name for one value is correct.
+
 `init` needs an answer at the prompt. A command with no terminal and no `--yes` stops,
 because `init` rewrites files in the project and a tool that runs it without a human behind
 it must say so with the flag.
