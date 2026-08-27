@@ -108,8 +108,20 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 			// The log must never hold a value. Every value that came out of
 			// the store is named here, so the log removes it with certainty
 			// and does not have to guess at it.
+			//
+			// The hide list goes in before the first return below. A command
+			// that stops on an error still writes to the log, and the list
+			// must already be there when it does.
 			log.Hide(res.Values)
 
+			// A store that does not open makes every reference look missing.
+			// The advice to set a value is wrong then, and it sends the
+			// developer to write a value that is already there.
+			if res.Err != nil && !allowMiss {
+				return fmt.Errorf("the store could not be read, so no handle could be resolved: %w.\n"+
+					"Check the key: SECRETVEIL_IDENTITY, SECRETVEIL_PASSPHRASE, or the OS keyring.\n"+
+					"Run \"secretveil doctor\" to see which key sources this machine has", res.Err)
+			}
 			if len(res.Missing) > 0 && !allowMiss {
 				return fmt.Errorf("the store holds no value for %s.\n"+
 					"Run \"secretveil set <ref>\" to add it, or pass --allow-missing to start anyway",
