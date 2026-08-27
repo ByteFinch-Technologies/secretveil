@@ -567,7 +567,8 @@ Error: connect failed with key <span class="v">sk-live-Q9xR2mVn7pLwT4aZ</span>
 <span class="cm">what you see</span>
 Error: connect failed with key <span class="h">sv://api_key</span></div>
         <p class="note">The filter works across chunk boundaries, so a value split over two writes
-        is still caught. It matches the base64 form of each value as well as the value itself.</p>
+        is still caught. It matches the encoded forms of each value as well as the value itself.
+        The forms are base64 in both alphabets, hex, the URL escape and the JSON string escape.</p>
       </div>
     </div>
   </div>
