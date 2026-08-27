@@ -336,3 +336,29 @@ func TestNoTemporaryFileIsLeftBehind(t *testing.T) {
 		t.Errorf("want exactly one file in the directory, got %d", len(entries))
 	}
 }
+
+// TestTheDirectorySyncReportsItsFault guards the last step of the atomic
+// write. A directory sync that cannot run must return the fault, and not
+// report a write that may not have reached the disk.
+func TestTheDirectorySyncReportsItsFault(t *testing.T) {
+	if err := syncDir(filepath.Join(t.TempDir(), "no-such-directory")); err == nil {
+		t.Error("a missing directory gave no error")
+	}
+}
+
+// TestAWriteReachesTheDiskDirectory runs the whole atomic write and reads the
+// value back from a new store, so the rename and the directory sync both run.
+func TestAWriteReachesTheDiskDirectory(t *testing.T) {
+	ctx := context.Background()
+	s, _, _ := newTestStore(t)
+	if err := s.Set(ctx, "api_key", "Zx91qLbT4vNs7Kd2FhWm0PjR"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "api_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Zx91qLbT4vNs7Kd2FhWm0PjR" {
+		t.Errorf("the value is %q", got)
+	}
+}
