@@ -264,10 +264,19 @@ func hideInURL(word string) (string, bool) {
 	}
 	out, hit := word, false
 
-	// The user information runs from after the scheme to the first "@". It
-	// holds a password only when it also holds a ":".
+	// The authority runs from after the scheme to the first "/", "?" or "#".
+	// Look for the "@" inside the authority only. A later "@" belongs to the
+	// path or to the query, and it names no credential.
+	//
+	// Inside the authority the user information runs to the LAST "@", because
+	// a password can hold an "@" of its own. It holds a password only when it
+	// also holds a ":".
 	rest := out[i+3:]
-	if at := strings.IndexByte(rest, '@'); at > 0 {
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	if at := strings.LastIndexByte(rest[:end], '@'); at > 0 {
 		if c := strings.IndexByte(rest[:at], ':'); c >= 0 {
 			out = out[:i+3] + rest[:c+1] + hidden + rest[at:]
 			hit = true

@@ -246,6 +246,25 @@ func TestRedact(t *testing.T) {
 		in:   []string{"ssh", "ssh://deploy@build.acme.io/srv"},
 		want: []string{"ssh", "ssh://deploy@build.acme.io/srv"},
 	}, {
+		// The password holds an "@" of its own. The user information ends at
+		// the last "@" of the authority, not the first. A search for the first
+		// "@" leaves the tail of the password in the log.
+		name: "a password that holds an at sign goes in full",
+		in:   []string{"psql", "postgres://app:p@ss@db.internal/orders"},
+		want: []string{"psql", "postgres://app:[hidden]@db.internal/orders"},
+	}, {
+		// The only "@" sits in the query, after the authority ended at the
+		// first "/". The authority holds no user information, so the whole URL
+		// must stay. A search for the first "@" destroys the path and the
+		// query, and it names the wrong host.
+		name: "a port is not a password",
+		in:   []string{"curl", "https://acme.io:8443/s?to=bob@acme.io"},
+		want: []string{"curl", "https://acme.io:8443/s?to=bob@acme.io"},
+	}, {
+		name: "a password goes when the URL has no path",
+		in:   []string{"psql", "postgres://app:Hunter2Pw@db"},
+		want: []string{"psql", "postgres://app:[hidden]@db"},
+	}, {
 		name: "a path, a flag and a file name are left alone",
 		in:   []string{"node", "--max-old-space-size=4096", "src/index.js"},
 		want: []string{"node", "--max-old-space-size=4096", "src/index.js"},
