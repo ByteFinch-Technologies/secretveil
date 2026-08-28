@@ -12,6 +12,7 @@ import (
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/audit"
 	"github.com/ByteFinch-Technologies/secretveil/internal/detect"
+	"github.com/ByteFinch-Technologies/secretveil/internal/migrate"
 	"github.com/ByteFinch-Technologies/secretveil/internal/policy"
 	"github.com/ByteFinch-Technologies/secretveil/internal/project"
 	"github.com/ByteFinch-Technologies/secretveil/internal/runtime"
@@ -131,6 +132,7 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 			errOut := cmd.ErrOrStderr()
 			if !quiet {
 				report(errOut, res)
+				warnUnread(errOut, root, res.Files)
 			}
 
 			out, err := runtime.Run(cmd.Context(), runtime.Config{
@@ -183,6 +185,47 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 	cmd.Flags().DurationVar(&idle, "idle-flush", 0,
 		"how long the filter waits before it releases the bytes it holds (default 40ms)")
 	return cmd
+}
+
+// warnUnread tells the developer that a .env file in the project root holds a
+// handle and that run did not read it.
+//
+// init and doctor already say this. run said nothing, and run is where the
+// developer stands when the fault appears. The program gets the text
+// "sv://stripe_dev_key" as its key, it fails, and no line on the screen
+// explains why. Nothing leaks, so this is a warning and not an error, and the
+// command still starts.
+//
+// bun makes the case common. bun is a runtime and not a framework, it loads up
+// to eight .env names by itself, and run reads two of them.
+//
+// The check reads the project root only. run wraps every command a developer
+// types, so it may not walk the tree for this.
+func warnUnread(w io.Writer, root string, read []string) {
+	// read holds .npmrc paths as well as .env paths. Only a .env name belongs
+	// in the load order, so the rest is dropped here.
+	names := make([]string, 0, len(read))
+	for _, p := range read {
+		if base := filepath.Base(p); migrate.IsSecretFile(base) {
+			names = append(names, base)
+		}
+	}
+	extra := runtime.UnreadInRoot(root, names)
+	if len(extra) == 0 {
+		return
+	}
+
+	// The copy line names every file, the ones already read and the ones that
+	// were missed. A developer who passed --env-file must not lose that file
+	// by running the line we print.
+	all := make([]string, 0, len(names)+len(extra))
+	all = append(all, names...)
+	all = append(all, extra...)
+
+	fmt.Fprintf(w, "secretveil: %s holds a handle and run did not read it. Your program gets the handle text.\n",
+		strings.Join(extra, ", "))
+	fmt.Fprintf(w, "secretveil: name the files you want, in load order: %s\n",
+		runtime.RunLine(runtime.LoadOrder(root, all)))
 }
 
 // report prints one short line about what run resolved. It never prints a

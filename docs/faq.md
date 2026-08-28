@@ -44,6 +44,28 @@ missing key and it does not start in a wrong state.
 
 Put `secretveil run --` in the `scripts` block of `package.json` so nobody has to remember it.
 
+## My program under bun still sees `sv://...`
+
+bun loads more `.env` names than `run` does. bun reads `.env`, then `.env.production` or
+`.env.development` or `.env.test` by `NODE_ENV`, then `.env.local`, then the `.local` name that
+matches `NODE_ENV`. `secretveil run` reads `.env` and `.env.local`.
+
+So a handle in `.env.development` is loaded by bun and reaches your program as the text
+`sv://stripe_dev_key`. Nothing leaked. The program got the handle instead of the value.
+
+`run` prints a warning and the line to copy when it finds this:
+
+```sh
+secretveil run --env-file .env --env-file .env.development -- bun run dev
+```
+
+Name the files in load order. The last file wins, the same way bun and every other loader
+behave. A variable that `run` puts in the environment beats every `.env` file that bun reads, so
+the value your program gets is the real one.
+
+`run` reads only two names by default on purpose. A wider default would change the behaviour of
+every project, and only you know which of the eight names your program uses.
+
 ## What happens to the value in my git history?
 
 Nothing. secretveil hides a value from the moment you run `init`. It cannot reach into a

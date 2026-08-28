@@ -26,6 +26,12 @@ import (
 // the fault is not the default. The fault is silence about it, and this
 // function exists to end that silence.
 //
+// bun makes this common, because bun is a runtime and not a framework and it
+// loads the files by itself. bun reads .env, then .env.production or
+// .env.development or .env.test by NODE_ENV, then .env.local, then the .local
+// name that matches NODE_ENV. That is up to eight names against the two that
+// run reads.
+//
 // Paths come back relative to root, in load order.
 func Unread(root string) ([]string, error) {
 	paths, err := migrate.Discover(root)
@@ -60,6 +66,60 @@ func Unread(root string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// UnreadInRoot is Unread for the root directory only, against the files that
+// were read.
+//
+// run wraps every command a developer types, so it may not walk the tree.
+// Unread calls migrate.Discover, which does walk, and that cost is right for
+// init and for doctor and wrong here. This function reads one directory and
+// then reads only the .env files in it that run did not load.
+//
+// The read list holds the base name of every file run loaded. A developer who
+// already named a file with --env-file must not be told about it again.
+//
+// The result is the same as Unread for the case that matters. A framework and
+// a runtime both read the .env files beside package.json, which is the root.
+// A handle in a .env file deeper in the tree is still reported by doctor.
+//
+// An error is never returned. run must start the command the developer asked
+// for, so a directory this function cannot read makes it say nothing.
+//
+// Names come back relative to root, sorted.
+func UnreadInRoot(root string, read []string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	wasRead := map[string]bool{}
+	for _, name := range read {
+		wasRead[name] = true
+	}
+
+	var out []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || wasRead[name] || !migrate.IsSecretFile(name) {
+			continue
+		}
+		if e.Type()&os.ModeSymlink != 0 {
+			// A symbolic link inside the project can point at any file on the
+			// machine, so it is never followed and never read. The migration
+			// makes the same choice.
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			continue
+		}
+		if len(handle.Refs(string(src))) == 0 {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // LoadOrder builds the list of files a developer should pass to run, so that

@@ -35,6 +35,34 @@ The install itself does not fail on Windows. `optionalDependencies` lets npm fin
 error comes only when you run the command. That way `npm install` in a mixed team does not
 break for one developer.
 
+## With bun
+
+```sh
+bunx secretveil doctor           # run it once, install nothing
+bun add --dev secretveil         # one project, one version for the whole team
+bun add --global secretveil      # every project on this machine
+```
+
+bun installs the same packages as npm. It reads `os` and `cpu`, so it takes only the
+platform package that matches the machine.
+
+The package runs no install script. bun blocks an install script by default and asks you to
+name the package in `trustedDependencies`. secretveil needs no such entry, because it has
+nothing to run at install time.
+
+The command itself runs under bun. The shim on your path starts with a shell line that picks
+bun when bun is there and Node.js when it is not, so a machine with only bun works.
+
+### bun reads more .env files than run does
+
+bun loads `.env`, then `.env.production` or `.env.development` or `.env.test` by `NODE_ENV`,
+then `.env.local`, then the `.local` name that matches `NODE_ENV`. `secretveil run` reads
+`.env` and `.env.local`.
+
+A handle in one of the other names reaches your program as the text `sv://...`. Nothing
+leaks, but the program fails. `run` prints a warning and the command to copy when this
+happens. See [the FAQ](faq.md).
+
 ## With Go
 
 ```sh

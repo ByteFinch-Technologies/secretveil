@@ -77,8 +77,8 @@ even though no rule recognised it. That one is a question for you, not a fault,
 so it never changes the exit code.
 
 It also names a credential in a file that secretveil does not rewrite, such as
-.netrc or .yarnrc.yml. It cannot protect those files, and it says so rather than
-report a clean project.
+.netrc, .yarnrc.yml or bunfig.toml. It cannot protect those files, and it says so
+rather than report a clean project.
 
 The exit code is 0 when nothing is wrong, and 1 when a check found something
 that puts a secret at risk. A note or a warning does not change the exit code.`,

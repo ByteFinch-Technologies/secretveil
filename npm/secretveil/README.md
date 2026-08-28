@@ -36,12 +36,14 @@ The full reasoning is in
 
 ```sh
 npx secretveil plan
+bunx secretveil plan
 ```
 
 ## Install it
 
 ```sh
 npm install --save-dev secretveil
+bun add --dev secretveil
 ```
 
 Then:
@@ -51,13 +53,29 @@ npx secretveil init
 npx secretveil run -- npm run dev
 ```
 
+bun works the same way:
+
+```sh
+bunx secretveil init
+bunx secretveil run -- bun run dev
+```
+
+bun reads more `.env` names than `run` does. If bun loads `.env.development` or `.env.test`,
+name that file too, and `run` tells you when it finds one:
+
+```sh
+bunx secretveil run --env-file .env --env-file .env.development -- bun run dev
+```
+
 ## About this package
 
-This package holds a small Node shim. The binary is in one of four packages,
+This package holds a small JavaScript shim. It starts with a shell line that picks bun when bun
+is on the path and Node.js when it is not, so a machine with only bun runs the command. The
+binary is in one of four packages,
 `@secretveil/darwin-arm64`, `@secretveil/darwin-x64`, `@secretveil/linux-x64` and
 `@secretveil/linux-arm64`, and npm installs only the one that matches your machine.
 
-**The shim costs about 20 ms of Node start time on every call.** `secretveil run` wraps every
+**The shim costs about 20 ms of node or bun start time on every call.** `secretveil run` wraps every
 command you type, so for daily use install the binary itself and skip the shim:
 
 ```sh

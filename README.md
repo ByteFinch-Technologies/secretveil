@@ -198,6 +198,13 @@ npm install --save-dev secretveil  # one project, one version for the team
 npm install --global secretveil    # every project on this machine
 ```
 
+bun installs it and runs it too, and a machine with no Node.js is enough:
+
+```sh
+bunx secretveil doctor             # run it once, install nothing
+bun add --dev secretveil           # one project, one version for the team
+```
+
 The npm package holds no binary. It names four platform packages, and npm installs only the one
 that matches the machine.
 

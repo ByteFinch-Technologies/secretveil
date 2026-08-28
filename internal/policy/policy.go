@@ -72,9 +72,13 @@ func Default() *Policy {
 			"env", "printenv", "set", "export", "declare", "printf",
 		},
 		InlineCode: map[string][]string{
-			"node":    {"-e", "--eval", "-p", "--print"},
-			"deno":    {"eval"},
-			"bun":     {"-e", "--eval"},
+			"node": {"-e", "--eval", "-p", "--print"},
+			"deno": {"eval"},
+			// bun runs code from the command line in five ways. The pairs
+			// -e and --eval, and -p and --print, evaluate an argument.
+			// "bun -" and "bun run -" read the program from standard input.
+			// "exec" runs a shell script. "repl" reads a program too.
+			"bun":     {"-e", "--eval", "-p", "--print", "-", "exec", "repl"},
 			"python":  {"-c"},
 			"python3": {"-c"},
 			"ruby":    {"-e"},
@@ -156,10 +160,17 @@ func (p *Policy) Check(args []string) error {
 			}
 		}
 		if bad := firstMatch(args[1:], flags); bad != "" {
+			// A word such as "exec" or "repl" is a subcommand and not a
+			// flag. Calling it a flag makes the developer look for a flag
+			// that is not there.
+			kind := "flag"
+			if !strings.HasPrefix(bad, "-") {
+				kind = "subcommand"
+			}
 			return &Refusal{
 				Program: name,
-				Rule: fmt.Sprintf("the flag %s runs code straight from the command line, which makes %s a shell",
-					bad, name),
+				Rule: fmt.Sprintf("the %s %s runs code straight from the command line, which makes %s a shell",
+					kind, bad, name),
 				Advice: "Put the code in a file and run the file.",
 			}
 		}
@@ -257,7 +268,7 @@ deny = [
 [agent.inline_code]
 node = ["-e", "--eval", "-p", "--print"]
 deno = ["eval"]
-bun = ["-e", "--eval"]
+bun = ["-e", "--eval", "-p", "--print", "-", "exec", "repl"]
 python = ["-c"]
 python3 = ["-c"]
 ruby = ["-e"]
