@@ -1,11 +1,12 @@
 # The gate that every change has to pass.
 #
-# Four jobs, and each one answers a different question.
+# Five jobs, and each one answers a different question.
 #
 #   test           Does it work, on both operating systems we support?
 #   promises       Are the two security promises still true?
 #   fuzz           Do the properties hold on input nobody wrote by hand?
 #   cross-compile  Does it still build for every platform we ship?
+#   bun            Does the npm package install and run under bun?
 #
 # The promises job is separate on purpose. If it goes red, the name in the list
 # of checks says what broke, and nobody has to open the log to find out.
@@ -195,3 +196,151 @@ jobs:
         run: |
           go build -trimpath -o "secretveil-${GOOS}-${GOARCH}" ./cmd/secretveil
           ls -l "secretveil-${GOOS}-${GOARCH}"
+
+  # bun is a second JavaScript runtime, and a developer may have it and no
+  # Node.js at all. Three things have to hold on such a machine, and none of
+  # them is covered by a Go test.
+  #
+  #   1. bun installs the package and takes only the platform package that
+  #      matches the machine.
+  #   2. The shim on the path starts the binary with no Node.js anywhere.
+  #   3. run says so when bun loads a .env file that run does not read. bun
+  #      reads up to eight names and run reads two.
+  #
+  # The packages are made here from the binary this branch builds, and not
+  # taken from the registry, so the job tests the change and not the release.
+  bun:
+    name: bun installs and runs it
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: download the modules
+        run: go mod download
+
+      - name: build the binary
+        run: go build -trimpath -o work/secretveil ./cmd/secretveil
+
+      # The two packages a Linux runner needs, in the shape npm/build.mjs
+      # makes them. A tarball is used and not a directory, because a directory
+      # is linked and not copied, and a linked package resolves its own
+      # dependency from the source tree instead of from node_modules.
+      - name: make the packages
+        run: |
+          mkdir -p work/platform/bin
+          cp work/secretveil work/platform/bin/secretveil
+          chmod +x work/platform/bin/secretveil
+          cat > work/platform/package.json <<'JSON'
+          {
+            "name": "@secretveil/linux-x64",
+            "version": "0.1.0",
+            "os": ["linux"],
+            "cpu": ["x64"],
+            "files": ["bin/secretveil"]
+          }
+          JSON
+          mkdir -p work/tgz
+          ( cd npm/secretveil && bun pm pack --destination "$GITHUB_WORKSPACE/work/tgz" )
+          ( cd work/platform && bun pm pack --destination "$GITHUB_WORKSPACE/work/tgz" )
+          ls -l work/tgz
+
+      - name: bun installs it
+        run: |
+          mkdir -p work/project
+          cat > work/project/package.json <<JSON
+          {
+            "name": "bun-check",
+            "private": true,
+            "dependencies": {
+              "secretveil": "file:$GITHUB_WORKSPACE/work/tgz/secretveil-0.1.0.tgz"
+            },
+            "overrides": {
+              "@secretveil/linux-x64": "file:$GITHUB_WORKSPACE/work/tgz/secretveil-linux-x64-0.1.0.tgz"
+            }
+          }
+          JSON
+          cd work/project
+          bun install
+          # Only the package for this machine may be on disk. The other three
+          # are optional and bun reads "os" and "cpu" the way npm does.
+          test -x node_modules/@secretveil/linux-x64/bin/secretveil
+          for other in darwin-arm64 darwin-x64 linux-arm64; do
+            if [ -e "node_modules/@secretveil/$other" ]; then
+              echo "bun installed @secretveil/$other on a linux x64 machine"
+              exit 1
+            fi
+          done
+
+      # A project marker is needed, or the command walks up out of the
+      # workspace looking for one.
+      - name: the command runs, with Node.js and without it
+        run: |
+          cd work/project
+          git init -q .
+          node --version
+          ./node_modules/.bin/secretveil version
+          # The same call again, with the node binary taken off the path. The
+          # shell line of the shim has to find bun and start it.
+          # Every directory that holds a node binary comes off the path, and
+          # the directory of bun goes on the front of what is left.
+          nonode="$(dirname "$(command -v bun)")"
+          for dir in $(echo "$PATH" | tr ':' ' '); do
+            if [ ! -x "$dir/node" ]; then nonode="$nonode:$dir"; fi
+          done
+          export PATH="$nonode"
+          if command -v node; then echo "node is still on the path"; exit 1; fi
+
+          ./node_modules/.bin/secretveil version
+          bun --print "require('secretveil').binaryPath()"
+          ./node_modules/.bin/secretveil doctor
+
+      # bun loads .env.development and run does not. The developer has to be
+      # told, because the program gets the handle text and the failure gives
+      # no reason.
+      - name: run warns about a .env file it did not read
+        env:
+          SECRETVEIL_CALLER: human
+          SECRETVEIL_PASSPHRASE: a passphrase for this check only
+        run: |
+          sv="$GITHUB_WORKSPACE/work/secretveil"
+          mkdir -p work/warn && cd work/warn
+          git init -q .
+          # The values are made here, so no file of this repository holds a
+          # value shaped like a credential.
+          printf 'API_KEY=%s\n' "$(head -c 18 /dev/urandom | base64)" > .env
+          printf 'STRIPE_DEV=%s\n' "$(head -c 18 /dev/urandom | base64)" > .env.development
+          cat > package.json <<'JSON'
+          { "name": "bun-warn", "private": true, "scripts": { "show": "bun show.ts" } }
+          JSON
+          cat > show.ts <<'TS'
+          for (const name of ["API_KEY", "STRIPE_DEV"]) {
+            const value = process.env[name] ?? "";
+            console.log(`${name} isHandle=${value.startsWith("sv://")}`);
+          }
+          TS
+          "$sv" init -y
+
+          "$sv" run -- bun run show > out.txt 2> err.txt
+          cat err.txt
+          grep -q 'API_KEY isHandle=false' out.txt
+          grep -q 'STRIPE_DEV isHandle=true' out.txt
+          grep -q '.env.development holds a handle and run did not read it' err.txt
+          grep -q -- '--env-file .env --env-file .env.development' err.txt
+
+          # The line that run printed has to be the line that fixes it.
+          "$sv" run --env-file .env --env-file .env.development -- bun run show > out2.txt 2> err2.txt
+          grep -q 'API_KEY isHandle=false' out2.txt
+          grep -q 'STRIPE_DEV isHandle=false' out2.txt
+          if grep -q 'did not read it' err2.txt; then
+            echo "run still warns after the files were named"
+            exit 1
+          fi

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/audit"
 	"github.com/ByteFinch-Technologies/secretveil/internal/detect"
+	"github.com/ByteFinch-Technologies/secretveil/internal/migrate"
 	"github.com/ByteFinch-Technologies/secretveil/internal/policy"
 	"github.com/ByteFinch-Technologies/secretveil/internal/project"
 	"github.com/ByteFinch-Technologies/secretveil/internal/runtime"
@@ -130,7 +131,8 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 
 			errOut := cmd.ErrOrStderr()
 			if !quiet {
-				report(errOut, res)
+				report(errOut, start, res)
+				warnUnread(errOut, start, res.Files)
 			}
 
 			out, err := runtime.Run(cmd.Context(), runtime.Config{
@@ -185,16 +187,79 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 	return cmd
 }
 
+// warnUnread tells the developer that a .env file in the project root holds a
+// handle and that run did not read it.
+//
+// init and doctor already say this. run said nothing, and run is where the
+// developer stands when the fault appears. The program gets the text
+// "sv://stripe_dev_key" as its key, it fails, and no line on the screen
+// explains why. Nothing leaks, so this is a warning and not an error, and the
+// command still starts.
+//
+// bun makes the case common. bun is a runtime and not a framework, it loads up
+// to eight .env names by itself, and run reads two of them.
+//
+// The check reads the project root only. run wraps every command a developer
+// types, so it may not walk the tree for this.
+func warnUnread(w io.Writer, dir string, read []string) {
+	// read holds .npmrc paths as well as .env paths. Only a .env name belongs
+	// in the load order, so the rest is dropped here.
+	//
+	// dir is the directory the command runs in, and it is the directory run
+	// read the files from. It is not always the project root. A developer in
+	// packages/api gets a warning about the files beside the command.
+	//
+	// A file outside dir keeps its place in the copy line and never counts as
+	// a file that was read. --env-file config/.env must not make the .env
+	// beside the command look read, because run never read that one.
+	var local, all []string
+	for _, p := range read {
+		if !migrate.IsSecretFile(filepath.Base(p)) {
+			continue
+		}
+		name := p
+		if rel, err := filepath.Rel(dir, p); err == nil {
+			name = rel
+		}
+		all = append(all, name)
+		if !strings.ContainsRune(name, filepath.Separator) && !strings.HasPrefix(name, "..") {
+			local = append(local, name)
+		}
+	}
+
+	extra := runtime.UnreadInRoot(dir, local)
+	if len(extra) == 0 {
+		return
+	}
+
+	// The copy line names every file, the ones already read and the ones that
+	// were missed. A developer who passed --env-file must not lose that file
+	// by running the line we print.
+	all = append(all, extra...)
+
+	fmt.Fprintf(w, "secretveil: %s holds a handle and run did not read it. Your program gets the handle text.\n",
+		strings.Join(extra, ", "))
+	fmt.Fprintf(w, "secretveil: name the files you want, in load order: %s\n",
+		runtime.RunLine(runtime.LoadOrder(dir, all)))
+}
+
 // report prints one short line about what run resolved. It never prints a
 // value, only a count and a name.
-func report(w io.Writer, res *runtime.Resolution) {
+func report(w io.Writer, dir string, res *runtime.Resolution) {
 	if len(res.Files) == 0 {
 		fmt.Fprintln(w, "secretveil: no .env or .npmrc file here. The program starts with the environment as it is.")
 		return
 	}
+	// The name is the one the developer typed. A base name alone would report
+	// "config/.env" as ".env", which names the wrong file to a reader and
+	// gives the same name to two files.
 	names := make([]string, 0, len(res.Files))
 	for _, p := range res.Files {
-		names = append(names, filepath.Base(p))
+		name := p
+		if rel, err := filepath.Rel(dir, p); err == nil {
+			name = rel
+		}
+		names = append(names, name)
 	}
 	fmt.Fprintf(w, "secretveil: %d secret(s) from %s\n", len(res.Values), strings.Join(names, ", "))
 	if len(res.Skipped) > 0 {

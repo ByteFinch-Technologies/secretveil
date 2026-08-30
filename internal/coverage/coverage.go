@@ -97,6 +97,29 @@ var rules = []rule{
 		advice: "yarn expands ${VAR} here. Put the value in a variable and name the variable instead.",
 	},
 	{
+		// bunfig.toml holds a registry credential in three shapes: a token, a
+		// password, and a user and password inside a URL. One rule covers all
+		// three, because the value is the last group in both branches.
+		//
+		// The value must hold one character that is not a digit, and it may
+		// not hold a slash. That keeps the URL branch off a port number,
+		// which is the common false positive: neither
+		// registry = "http://localhost:4873" nor a URL that ends in :443/
+		// holds a credential. A purely numeric password is missed, and that
+		// is the price of a check the developer keeps switched on.
+		//
+		// A handle in this file is reported and not skipped. bun expands $VAR
+		// here and it does not expand sv://, so a handle in bunfig.toml does
+		// not work and the developer must know. This works because the value
+		// group holds no "/", so sv://npm_token is captured as "sv:", which
+		// the shared placeholder list does not match. TestBunfigShapes holds
+		// that behaviour.
+		kind:   "bunfig.toml",
+		match:  exact("bunfig.toml"),
+		line:   regexp.MustCompile(`(?i)(\b(?:token|password)\s*=\s*["']?|://[^:/@\s]+:)([^"'\s@,/]*[^0-9"'\s@,/][^"'\s@,/]*)`),
+		advice: "bun expands $VAR here. Put the value in a variable and name the variable instead.",
+	},
+	{
 		kind:   ".pypirc",
 		match:  exact(".pypirc"),
 		line:   regexp.MustCompile(`(?i)^\s*password\s*[:=]\s*(\S+)`),

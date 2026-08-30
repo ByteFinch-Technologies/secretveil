@@ -87,6 +87,7 @@ func TestEveryKindFires(t *testing.T) {
 		{".docker/config.json", `{"auths":{"r.io":{"auth":"YWJjOmRlZg=="}}}`, "docker config"},
 		{"credentials", "[default]\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCY\n", "aws credentials"},
 		{".envrc", "export STRIPE_SECRET_KEY=sk_live_aaaaaaaaaaaaaaaaaaaaaaaa\n", ".envrc"},
+		{"bunfig.toml", "[install]\nregistry = { url = \"https://r.io/\", token = \"npm_A9fK2xQw7ZtR4mVn8sLp\" }\n", "bunfig.toml"},
 		{"terraform.tfvars", "db_password = \"s3cr3t-p4ssw0rd-x9\"\n", "terraform variables"},
 		{"prod.auto.tfvars", "api_token = \"aaaaaaaaaaaaaaaaaaaa\"\n", "terraform variables"},
 	}
@@ -103,6 +104,50 @@ func TestEveryKindFires(t *testing.T) {
 			}
 			if found[0].Advice == "" {
 				t.Error("a finding with no advice tells the developer nothing")
+			}
+		})
+	}
+}
+
+// TestBunfigShapes holds the bunfig.toml rule to the three shapes bun reads and
+// keeps it off a port number. A port is the one thing in this file that looks
+// like a password and is not one.
+func TestBunfigShapes(t *testing.T) {
+	fires := map[string]string{
+		"token in an inline table":        "[install.scopes]\nmyorg = { token = \"npm_A9fK2xQw7ZtR4mVn\", url = \"https://r.io/\" }\n",
+		"password in an inline table":     "[install.scopes]\nmyorg = { username = \"bob\", password = \"s3cr3t-p4ssw0rd\", url = \"https://r.io/\" }\n",
+		"user and password in a URL":      "[install]\nregistry = \"https://bob:s3cr3t-p4ssw0rd@registry.npmjs.org\"\n",
+		"a handle, which bun cannot read": "[install]\nregistry = { url = \"https://r.io/\", token = \"sv://npm_token\" }\n",
+	}
+	for name, body := range fires {
+		t.Run("fires/"+name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, "bunfig.toml", body)
+			found := scan(t, root)
+			if len(found) != 1 {
+				t.Fatalf("want 1 finding, got %d: %+v", len(found), found)
+			}
+			if found[0].Kind != "bunfig.toml" {
+				t.Errorf("kind = %q, want bunfig.toml", found[0].Kind)
+			}
+		})
+	}
+
+	quiet := map[string]string{
+		"a variable":          "[install.scopes]\nmyorg = { token = \"$NPM_TOKEN\", url = \"https://r.io/\" }\n",
+		"a braced variable":   "[install.scopes]\nmyorg = { token = \"${NPM_TOKEN}\", url = \"https://r.io/\" }\n",
+		"a variable in a URL": "[install]\nregistry = \"https://bob:${NPM_PASS}@registry.npmjs.org\"\n",
+		"a local port":        "[install]\nregistry = \"http://localhost:4873\"\n",
+		"an explicit port":    "[install]\nregistry = \"https://registry.npmjs.org:443/\"\n",
+		"a plain registry":    "[install]\nregistry = \"https://registry.npmjs.org\"\n",
+		"ordinary settings":   "[install]\ncache = true\nexact = true\n\n[test]\ncoverage = true\n",
+	}
+	for name, body := range quiet {
+		t.Run("quiet/"+name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, "bunfig.toml", body)
+			if found := scan(t, root); len(found) != 0 {
+				t.Errorf("want no finding, got %+v", found)
 			}
 		})
 	}

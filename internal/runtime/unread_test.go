@@ -190,3 +190,108 @@ func TestASymbolicLinkIsNotFollowed(t *testing.T) {
 		}
 	}
 }
+
+// TestUnreadInRootNamesTheFileRunMissed is the case that made run print a
+// warning. A handle in .env.development reaches the program as text, and run
+// is where the developer stands when that happens.
+func TestUnreadInRootNamesTheFileRunMissed(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\n")
+	write(t, dir, ".env.development", "STRIPE_DEV_KEY=sv://stripe_dev_key\n")
+
+	got := UnreadInRoot(dir, DefaultFiles)
+	if len(got) != 1 || got[0] != ".env.development" {
+		t.Fatalf("want [.env.development], got %v", got)
+	}
+}
+
+// TestUnreadInRootRespectsTheFilesThatWereRead keeps run quiet for a developer
+// who already named the file. A warning about work that is done teaches the
+// developer to stop reading warnings.
+func TestUnreadInRootRespectsTheFilesThatWereRead(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\n")
+	write(t, dir, ".env.development", "STRIPE_DEV_KEY=sv://stripe_dev_key\n")
+
+	got := UnreadInRoot(dir, []string{".env", ".env.development"})
+	if len(got) != 0 {
+		t.Fatalf("a file that run read was reported: %v", got)
+	}
+}
+
+// TestUnreadInRootIsQuietOnAnOrdinaryProject holds the warning off the project
+// that has nothing wrong with it.
+func TestUnreadInRootIsQuietOnAnOrdinaryProject(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\n")
+	write(t, dir, ".env.local", "OTHER=sv://other\n")
+	write(t, dir, ".env.test", "PORT=3000\n")
+	write(t, dir, ".env.example", "API_KEY=sv://api_key\n")
+
+	if got := UnreadInRoot(dir, DefaultFiles); len(got) != 0 {
+		t.Fatalf("want no report, got %v", got)
+	}
+}
+
+// TestUnreadInRootDoesNotWalk is the constraint that made this function exist
+// beside Unread. run wraps every command a developer types, so a handle in a
+// subdirectory is doctor's work and not run's.
+func TestUnreadInRootDoesNotWalk(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\n")
+	deepDir := filepath.Join(dir, "packages", "api")
+	if err := os.MkdirAll(deepDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, deepDir, ".env.development", "K=sv://k\n")
+
+	if got := UnreadInRoot(dir, DefaultFiles); len(got) != 0 {
+		t.Fatalf("the root check walked into a subdirectory: %v", got)
+	}
+	deep, err := Unread(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deep) != 1 {
+		t.Fatalf("doctor must still find it, got %v", deep)
+	}
+}
+
+// TestUnreadInRootDoesNotFollowASymbolicLink holds the root check to the same
+// promise the migration makes. A link inside the project can point at any file
+// on the machine.
+func TestUnreadInRootDoesNotFollowASymbolicLink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secrets")
+	if err := os.WriteFile(outside, []byte("API_KEY=sv://api_key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, ".env.development")); err != nil {
+		t.Skipf("this machine does not allow a symbolic link: %v", err)
+	}
+
+	if got := UnreadInRoot(dir, DefaultFiles); len(got) != 0 {
+		t.Fatalf("the check followed a symbolic link: %v", got)
+	}
+}
+
+// TestUnreadInRootSurvivesAMissingDirectory proves run still starts the
+// command. A warning that stops the program is worse than no warning.
+func TestUnreadInRootSurvivesAMissingDirectory(t *testing.T) {
+	if got := UnreadInRoot(filepath.Join(t.TempDir(), "no-such-dir"), DefaultFiles); got != nil {
+		t.Fatalf("want nil, got %v", got)
+	}
+}
+
+// TestUnreadInRootSkipsAFileTooLargeToBeAnEnvFile keeps the cost off the run
+// path. The warning is a courtesy, so a file this size is passed over and not
+// read into memory on every command.
+func TestUnreadInRootSkipsAFileTooLargeToBeAnEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\n")
+	write(t, dir, ".env.big", "DEV=sv://dev\n"+strings.Repeat("# padding\n", (maxEnvFile/10)+1))
+
+	if got := UnreadInRoot(dir, []string{".env"}); len(got) != 0 {
+		t.Errorf("want no name, got %v", got)
+	}
+}
