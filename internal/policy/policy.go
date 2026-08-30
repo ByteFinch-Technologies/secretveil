@@ -78,6 +78,11 @@ func Default() *Policy {
 			// -e and --eval, and -p and --print, evaluate an argument.
 			// "bun -" and "bun run -" read the program from standard input.
 			// "exec" runs a shell script. "repl" reads a program too.
+			//
+			// firstMatch reads every argument and not only the first one, so
+			// "bun add repl" is refused as well. That is deliberate. A rule
+			// that looked at the position alone would let "bun --silent exec"
+			// through, and an agent must not have that door.
 			"bun":     {"-e", "--eval", "-p", "--print", "-", "exec", "repl"},
 			"python":  {"-c"},
 			"python3": {"-c"},

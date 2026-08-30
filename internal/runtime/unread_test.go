@@ -282,3 +282,16 @@ func TestUnreadInRootSurvivesAMissingDirectory(t *testing.T) {
 		t.Fatalf("want nil, got %v", got)
 	}
 }
+
+// TestUnreadInRootSkipsAFileTooLargeToBeAnEnvFile keeps the cost off the run
+// path. The warning is a courtesy, so a file this size is passed over and not
+// read into memory on every command.
+func TestUnreadInRootSkipsAFileTooLargeToBeAnEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\n")
+	write(t, dir, ".env.big", "DEV=sv://dev\n"+strings.Repeat("# padding\n", (maxEnvFile/10)+1))
+
+	if got := UnreadInRoot(dir, []string{".env"}); len(got) != 0 {
+		t.Errorf("want no name, got %v", got)
+	}
+}

@@ -85,3 +85,53 @@ func TestAnNpmrcIsNotPutInTheLoadOrder(t *testing.T) {
 		t.Errorf("an .npmrc reached the load order:\n%s", out.String())
 	}
 }
+
+// TestTheWarningLooksInTheDirectoryTheCommandRunsIn holds the fix for the
+// case bun is loudest about. run reads the .env files beside the command, and
+// so does bun. A developer in packages/api must hear about the file there and
+// not about the one in the repository root.
+func TestTheWarningLooksInTheDirectoryTheCommandRunsIn(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".env.production", "PROD=sv://prod\n")
+
+	sub := filepath.Join(root, "packages", "api")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, sub, ".env", "API_KEY=sv://api_key\n")
+	writeFile(t, sub, ".env.development", "DEV=sv://dev\n")
+
+	var out bytes.Buffer
+	warnUnread(&out, sub, []string{filepath.Join(sub, ".env")})
+
+	got := out.String()
+	if !strings.Contains(got, ".env.development") {
+		t.Errorf("the warning does not name the file beside the command:\n%s", got)
+	}
+	if strings.Contains(got, ".env.production") {
+		t.Errorf("the warning names a file in another directory:\n%s", got)
+	}
+}
+
+// TestAFileInAnotherDirectoryIsNotCountedAsRead guards a warning that would
+// stay silent. --env-file config/.env reads a different file with the same
+// base name, and the .env beside the command is still unread.
+func TestAFileInAnotherDirectoryIsNotCountedAsRead(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".env", "API_KEY=sv://api_key\n")
+	if err := os.MkdirAll(filepath.Join(root, "config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "config"), ".env", "OTHER=sv://other\n")
+
+	var out bytes.Buffer
+	warnUnread(&out, root, []string{filepath.Join(root, "config", ".env")})
+
+	got := out.String()
+	if !strings.Contains(got, "holds a handle and run did not read it") {
+		t.Fatalf("want a warning about the .env beside the command, got:\n%s", got)
+	}
+	if !strings.Contains(got, "--env-file "+filepath.Join("config", ".env")) {
+		t.Errorf("the copy line lost the file the developer named:\n%s", got)
+	}
+}

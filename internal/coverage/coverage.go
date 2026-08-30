@@ -110,7 +110,10 @@ var rules = []rule{
 		//
 		// A handle in this file is reported and not skipped. bun expands $VAR
 		// here and it does not expand sv://, so a handle in bunfig.toml does
-		// not work and the developer must know.
+		// not work and the developer must know. This works because the value
+		// group holds no "/", so sv://npm_token is captured as "sv:", which
+		// the shared placeholder list does not match. TestBunfigShapes holds
+		// that behaviour.
 		kind:   "bunfig.toml",
 		match:  exact("bunfig.toml"),
 		line:   regexp.MustCompile(`(?i)(\b(?:token|password)\s*=\s*["']?|://[^:/@\s]+:)([^"'\s@,/]*[^0-9"'\s@,/][^"'\s@,/]*)`),

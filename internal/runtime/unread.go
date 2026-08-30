@@ -68,27 +68,34 @@ func Unread(root string) ([]string, error) {
 	return out, nil
 }
 
-// UnreadInRoot is Unread for the root directory only, against the files that
-// were read.
+// maxEnvFile is the largest file UnreadInRoot reads. A .env file above one
+// megabyte is not an environment file, and run must not carry that cost on
+// every command.
+const maxEnvFile = 1 << 20
+
+// UnreadInRoot is Unread for one directory only, against the files that were
+// read.
 //
 // run wraps every command a developer types, so it may not walk the tree.
 // Unread calls migrate.Discover, which does walk, and that cost is right for
 // init and for doctor and wrong here. This function reads one directory and
 // then reads only the .env files in it that run did not load.
 //
-// The read list holds the base name of every file run loaded. A developer who
-// already named a file with --env-file must not be told about it again.
+// The read list holds the name of every file run loaded in this directory. A
+// developer who already named a file with --env-file must not be told about it
+// again.
 //
-// The result is the same as Unread for the case that matters. A framework and
-// a runtime both read the .env files beside package.json, which is the root.
-// A handle in a .env file deeper in the tree is still reported by doctor.
+// dir is the directory the command runs in, not the project root. run loads
+// the .env files beside the command, and a runtime such as bun loads the same
+// ones, so this function must look in the same place. A handle in a .env file
+// anywhere else in the tree is still reported by doctor.
 //
 // An error is never returned. run must start the command the developer asked
 // for, so a directory this function cannot read makes it say nothing.
 //
-// Names come back relative to root, sorted.
-func UnreadInRoot(root string, read []string) []string {
-	entries, err := os.ReadDir(root)
+// Names come back relative to dir, sorted.
+func UnreadInRoot(dir string, read []string) []string {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
@@ -103,13 +110,19 @@ func UnreadInRoot(root string, read []string) []string {
 		if e.IsDir() || wasRead[name] || !migrate.IsSecretFile(name) {
 			continue
 		}
-		if e.Type()&os.ModeSymlink != 0 {
-			// A symbolic link inside the project can point at any file on the
-			// machine, so it is never followed and never read. The migration
-			// makes the same choice.
+		// Only an ordinary file is read. A symbolic link inside the project
+		// can point at any file on the machine, and a named pipe blocks the
+		// read until somebody writes to it, which would stop the command from
+		// ever starting. The migration makes the same choice about a link.
+		if !e.Type().IsRegular() {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join(root, name))
+		// The warning is a courtesy and never a gate, so a file too large to
+		// be an environment file is passed over instead of read into memory.
+		if info, err := e.Info(); err != nil || info.Size() > maxEnvFile {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}
