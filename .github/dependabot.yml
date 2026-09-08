@@ -17,6 +17,14 @@ updates:
     commit-message:
       prefix: ci
     labels: [dependencies]
+    groups:
+      # github/codeql-action is one action with three entry points, and this
+      # workflow uses all three: init, autobuild and analyze. CodeQL stops with a
+      # configuration error if the three steps are not on the same version. A
+      # separate pull request for each entry point can therefore never pass its
+      # own check. This group moves the three together in one pull request.
+      codeql-action:
+        patterns: ["github/codeql-action*"]
 
   - package-ecosystem: gomod
     directory: /
