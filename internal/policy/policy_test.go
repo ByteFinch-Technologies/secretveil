@@ -300,6 +300,36 @@ func TestWeakerNamesWhatAFileTurnsOff(t *testing.T) {
 	}
 }
 
+// TestAPathInThePolicyNamesTheProgram covers the review of PR 64. A deny list
+// of paths looked complete to Weaker and matched nothing in Check, so an agent
+// could turn every rule off with no approval.
+func TestAPathInThePolicyNamesTheProgram(t *testing.T) {
+	var deny []string
+	for _, name := range Default().Agent.Deny {
+		deny = append(deny, "/bin/"+name)
+	}
+	body := "[agent]\nenforce = true\ndeny = [" + quoted(deny) + "]\nallow = [\"/usr/bin/npm\", \"sh\", \"node\"]\n" +
+		"[agent.inline_code]\nnode = [\"-e\"]\n\"/usr/local/bin/node\" = []\n"
+	p, err := Load(writePolicy(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"sh", "-c", "x"}, {"printenv"}, {"/usr/bin/printenv"}, {"node", "app.js"}} {
+		if p.Check(args) == nil {
+			t.Errorf("a policy that names the program by its path allowed %q", args)
+		}
+	}
+	if err := p.Check([]string{"npm", "test"}); err != nil {
+		t.Errorf("an allow entry written as a path did not allow npm: %v", err)
+	}
+	if got := p.Agent.InlineCode["node"]; len(got) != 0 {
+		t.Errorf("two keys for node did not join into the stricter rule, got %q", got)
+	}
+	if _, ok := p.Agent.InlineCode["/usr/local/bin/node"]; ok {
+		t.Error("the key written as a path was kept")
+	}
+}
+
 // TestTheFloorPutsEveryDefaultRuleBack is the rule set an agent gets from a
 // file that no human approved.
 func TestTheFloorPutsEveryDefaultRuleBack(t *testing.T) {

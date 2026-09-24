@@ -140,7 +140,48 @@ func decode(path string, body []byte) (*Policy, error) {
 	for _, key := range md.Undecoded() {
 		return nil, fmt.Errorf("the policy file %s holds a setting nobody knows: %s", path, key.String())
 	}
+	normalize(p)
 	return p, nil
+}
+
+// normalize reduces every program name in p with programName, one time, when
+// the file is read.
+//
+// Check reduces the command to its name, so a rule must hold the name too. A
+// file that wrote /bin/printenv in the deny list looked complete to Weaker,
+// which reduced both sides, and matched nothing in Check, which did not. An
+// agent could then turn the deny list off with no approval. With one form in
+// the policy, every reader of it gives the same answer.
+//
+// Two inline_code keys can name one program, such as node and /usr/bin/node.
+// Their flags are joined. An empty list refuses every use, so an empty list on
+// either key wins.
+func normalize(p *Policy) {
+	for i, name := range p.Agent.Deny {
+		p.Agent.Deny[i] = programName(name)
+	}
+	for i, name := range p.Agent.Allow {
+		p.Agent.Allow[i] = programName(name)
+	}
+	inline := make(map[string][]string, len(p.Agent.InlineCode))
+	for prog, flags := range p.Agent.InlineCode {
+		name := programName(prog)
+		got, seen := inline[name]
+		switch {
+		case !seen:
+			inline[name] = append([]string{}, flags...)
+		case len(got) == 0 || len(flags) == 0:
+			inline[name] = []string{}
+		default:
+			for _, flag := range flags {
+				if !contains(got, flag) {
+					got = append(got, flag)
+				}
+			}
+			inline[name] = got
+		}
+	}
+	p.Agent.InlineCode = inline
 }
 
 // ApprovalKey names the setting in the encrypted store that holds the hash of

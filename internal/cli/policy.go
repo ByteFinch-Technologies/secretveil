@@ -142,12 +142,12 @@ func agentCheck(root string, file *agefile.Store, args []string) (*policy.Refusa
 	// The file allows the command and the floor does not. Say so, or the
 	// developer reads the file, sees that it allows the command, and cannot
 	// see why it was refused.
-	why := "the policy file allows it, but no human approved that file, and " + summary(reasons)
+	tail := "policy file allows it, but no human approved that file, and " + summary(reasons)
 	return &policy.Refusal{
 		Program: r.Program,
 		Rule:    r.Rule,
-		Advice:  "T" + why[1:] + ". If a person wrote the file, that person can run \"secretveil policy approve\".",
-	}, r.Rule + "; " + why, nil
+		Advice:  "The " + tail + ". If a person wrote the file, that person can run \"secretveil policy approve\".",
+	}, r.Rule + "; the " + tail, nil
 }
 
 // summary names the first reason and counts the rest, so one line holds it.
