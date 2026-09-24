@@ -524,6 +524,8 @@ func TestTheCallerIsNamedWithTheRightArticle(t *testing.T) {
 		{"get", "--reveal", "api_key"},
 		{"restore"},
 		{"doctor"},
+		{"rm", "api_key"},
+		{"set", "api_key"},
 	} {
 		r := sv(t, root, nil, args...)
 		if !strings.Contains(r.all(), "looks like an agent") {

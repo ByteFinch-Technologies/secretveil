@@ -62,8 +62,8 @@ again after each change.`,
 			}
 
 			if who.Caller != detect.Human {
-				why := fmt.Sprintf("policy approve needs a human at a terminal, and this caller looks like a %s, because %s",
-					who.Caller, who.Reason)
+				why := fmt.Sprintf("policy approve needs a human at a terminal, and this caller looks like %s, because %s",
+					who.Caller.WithArticle(), who.Reason)
 				_ = log.Write(audit.Record{
 					Event:  audit.EventPolicy,
 					Caller: who.Caller.String(),
