@@ -173,7 +173,7 @@ func runChecks(ctx context.Context, root string) []finding {
 // question a developer asks after a refusal they did not expect.
 func checkCaller() finding {
 	who := detect.Detect()
-	f := finding{levelOK, fmt.Sprintf("this caller looks like a %s, because %s", who.Caller, who.Reason), nil}
+	f := finding{levelOK, fmt.Sprintf("this caller looks like %s, because %s", who.Caller.WithArticle(), who.Reason), nil}
 	if who.Caller == detect.Agent {
 		f.level = levelNote
 		f.detail = []string{

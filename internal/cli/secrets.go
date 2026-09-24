@@ -232,8 +232,8 @@ value to the child program and keeps it out of the output.`,
 			}
 			if who.Caller != detect.Human {
 				return refuse(fmt.Sprintf(
-					"get needs a human at a terminal, and this caller looks like a %s, because %s",
-					who.Caller, who.Reason))
+					"get needs a human at a terminal, and this caller looks like %s, because %s",
+					who.Caller.WithArticle(), who.Reason))
 			}
 
 			chain, _ := openStore(root)
