@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"filippo.io/age"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/detect"
 )
 
 // The values below are invented. None of them is a real credential.
@@ -110,7 +112,7 @@ func sv(t *testing.T, root string, extra []string, args ...string) result {
 	t.Helper()
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(withoutAgentMarkers(os.Environ()),
 		"SECRETVEIL_CALLER=agent",
 		"SECRETVEIL_IDENTITY="+identity,
 		// A marker of the machine that runs the test must not change the
@@ -447,6 +449,62 @@ func TestTheDefaultForAnUnknownCallerIsAgent(t *testing.T) {
 	if r.code == 0 {
 		t.Fatalf("an unknown caller got a shell:\n%s", r.all())
 	}
+}
+
+// TestAnAgentCannotCallItselfAHuman covers issue 53. The agent writes the
+// command line, so it can put SECRETVEIL_CALLER=human or CI=1 in front of the
+// command. The marker of the AI tool must win over both.
+func TestAnAgentCannotCallItselfAHuman(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this case needs a posix shell")
+	}
+	root := project(t)
+
+	for _, extra := range [][]string{
+		{"CLAUDECODE=1", "SECRETVEIL_CALLER=human"},
+		{"CLAUDECODE=1", "SECRETVEIL_CALLER=ci"},
+		{"CLAUDECODE=1", "CI=1"},
+		{"CLAUDECODE=1", "GITHUB_ACTIONS=true"},
+	} {
+		t.Run(strings.Join(extra, " "), func(t *testing.T) {
+			r := sv(t, root, extra, "run", "--", "sh", "-c", "echo $API_KEY | rev")
+			if r.code == 0 {
+				t.Fatalf("an agent got a shell:\n%s", r.all())
+			}
+			mustNotLeak(t, r, "agent")
+			if strings.Contains(r.all(), reverse(apiKey)) {
+				t.Fatalf("the reversed value reached the output:\n%s", r.all())
+			}
+
+			r = sv(t, root, extra, "get", "api_key", "--reveal")
+			if r.code == 0 {
+				t.Fatalf("an agent revealed a value:\n%s", r.all())
+			}
+			mustNotLeak(t, r, "agent")
+		})
+	}
+}
+
+func reverse(s string) string {
+	b := []byte(s)
+	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	return string(b)
+}
+
+// withoutAgentMarkers removes the markers of the AI tool that runs the tests.
+// Without this, a case that sets SECRETVEIL_CALLER=human fails whenever the
+// suite runs inside an AI tool, because the marker wins over the override.
+func withoutAgentMarkers(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !detect.IsAgentMarker(name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func write(t *testing.T, path, body string) {

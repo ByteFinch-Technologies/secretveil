@@ -99,12 +99,23 @@ type Result struct {
 //
 // The rules run in this order, and the first one that fits wins:
 //
-//  1. SECRETVEIL_CALLER is set. Trust it.
-//  2. A pipeline marker is set. The caller is CI.
-//  3. An AI tool marker is set. The caller is an agent.
+//  1. An AI tool marker is set. The caller is an agent.
+//  2. SECRETVEIL_CALLER is set. Trust it.
+//  3. A pipeline marker is set. The caller is CI.
 //  4. Standard input and standard output are both a terminal. The caller is a
 //     human.
 //  5. Anything else is an agent.
+//
+// Rule 1 comes first because every other rule reads something that the agent
+// controls. An agent writes the command line, so it can put
+// SECRETVEIL_CALLER=human or CI=1 in front of the command. The AI tool sets its
+// marker before the agent writes anything, and a variable that the agent adds
+// cannot remove it. An AI tool that runs inside a pipeline is an agent for the
+// same reason.
+//
+// Rule 1 is not a wall. An agent can start the command with "env -u" to remove
+// the marker, and a program such as script(1) can give it a terminal. The
+// threat model lists this limit. The order only makes the easy routes fail.
 //
 // Rule 5 is the important one. A command with no terminal and no marker could
 // be a script that a developer wrote, or it could be a tool nobody has heard of
@@ -120,14 +131,23 @@ func detect(
 	environ func() []string,
 	isTTY func() bool,
 ) Result {
+	if m := firstAgentMarker(environ()); m != "" {
+		if raw, ok := lookup(EnvOverride); ok && overrideCaller(raw) != Agent {
+			// The override is a line of text that the agent can write. The
+			// marker is not, so the marker wins.
+			return Result{Agent, m + " is set, so " + EnvOverride + "=" + quote(norm(raw)) + " is ignored"}
+		}
+		return Result{Agent, m + " is set"}
+	}
+
 	if raw, ok := lookup(EnvOverride); ok {
-		name := strings.ToLower(strings.TrimSpace(raw))
-		switch name {
-		case "human", "user", "person":
+		name := norm(raw)
+		switch c := overrideCaller(raw); {
+		case c == Human:
 			return Result{Human, EnvOverride + " says human"}
-		case "ci", "pipeline", "build":
+		case c == CI:
 			return Result{CI, EnvOverride + " says ci"}
-		case "agent", "ai", "bot":
+		case name == "agent" || name == "ai" || name == "bot":
 			return Result{Agent, EnvOverride + " says agent"}
 		default:
 			// A value nobody recognises is not a reason to open the door.
@@ -141,15 +161,39 @@ func detect(
 		}
 	}
 
-	if m := firstAgentMarker(environ()); m != "" {
-		return Result{Agent, m + " is set"}
-	}
-
 	if isTTY() {
 		return Result{Human, "standard input and standard output are both a terminal"}
 	}
 
 	return Result{Agent, "there is no terminal and no marker, so the caller is treated as an agent"}
+}
+
+// overrideCaller reads a value of SECRETVEIL_CALLER. A value it does not know
+// is an agent.
+func overrideCaller(raw string) Caller {
+	switch norm(raw) {
+	case "human", "user", "person":
+		return Human
+	case "ci", "pipeline", "build":
+		return CI
+	default:
+		return Agent
+	}
+}
+
+func norm(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+// IsAgentMarker reports whether a variable name marks an AI tool. A test
+// harness uses it to remove the markers of the tool that runs the tests.
+func IsAgentMarker(name string) bool {
+	for _, m := range agentMarkers {
+		if name == m || (strings.HasSuffix(m, "_") && strings.HasPrefix(name, m)) {
+			return true
+		}
+	}
+	return false
 }
 
 // firstAgentMarker returns the name of the first AI tool marker in the
@@ -169,10 +213,8 @@ func firstAgentMarker(env []string) string {
 	sort.Strings(names)
 
 	for _, name := range names {
-		for _, m := range agentMarkers {
-			if name == m || (strings.HasSuffix(m, "_") && strings.HasPrefix(name, m)) {
-				return name
-			}
+		if IsAgentMarker(name) {
+			return name
 		}
 	}
 	return ""

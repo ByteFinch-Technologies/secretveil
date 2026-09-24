@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -33,8 +34,26 @@ func TestTheRulesRunInOrder(t *testing.T) {
 		// the rest does not break the test.
 		reason string
 	}{{
-		name:   "the override wins over every other rule",
-		vars:   map[string]string{EnvOverride: "human", "CI": "true", "CLAUDECODE": "1"},
+		// Issue 53. The agent writes the command line, so it can write the
+		// override. The marker comes from the AI tool and wins.
+		name:   "an agent marker beats an override to human",
+		vars:   map[string]string{EnvOverride: "human", "CLAUDECODE": "1"},
+		tty:    true,
+		want:   Agent,
+		reason: "CLAUDECODE is set, so SECRETVEIL_CALLER=\"human\" is ignored",
+	}, {
+		name:   "an agent marker beats an override to ci",
+		vars:   map[string]string{EnvOverride: " Pipeline ", "AIDER_MODEL": "gpt"},
+		want:   Agent,
+		reason: "AIDER_MODEL is set, so SECRETVEIL_CALLER=\"pipeline\" is ignored",
+	}, {
+		name:   "an override to agent next to a marker gives the plain reason",
+		vars:   map[string]string{EnvOverride: "agent", "CLAUDECODE": "1"},
+		want:   Agent,
+		reason: "CLAUDECODE is set",
+	}, {
+		name:   "the override wins over a pipeline marker and the terminal",
+		vars:   map[string]string{EnvOverride: "human", "CI": "true"},
 		tty:    false,
 		want:   Human,
 		reason: "says human",
@@ -58,8 +77,15 @@ func TestTheRulesRunInOrder(t *testing.T) {
 		want:   Agent,
 		reason: "not a known caller",
 	}, {
-		name:   "a pipeline marker beats an agent marker",
-		vars:   map[string]string{"GITHUB_ACTIONS": "true", "CLAUDECODE": "1"},
+		// Issue 53. CI=1 in front of the command made an agent a pipeline, and
+		// a pipeline keeps its shell. An AI tool in a pipeline is an agent.
+		name:   "an agent marker beats a pipeline marker",
+		vars:   map[string]string{"GITHUB_ACTIONS": "true", "CI": "1", "CLAUDECODE": "1"},
+		want:   Agent,
+		reason: "CLAUDECODE is set",
+	}, {
+		name:   "a pipeline marker alone is ci",
+		vars:   map[string]string{"GITHUB_ACTIONS": "true"},
 		want:   CI,
 		reason: "GITHUB_ACTIONS is set",
 	}, {
@@ -205,6 +231,15 @@ func TestEveryMarkerFires(t *testing.T) {
 // TestDetectReadsTheRealEnvironment proves the wiring. Every other test drives
 // the rules with a fake environment, so one test has to call the real thing.
 func TestDetectReadsTheRealEnvironment(t *testing.T) {
+	// The tests can run inside an AI tool, and its marker wins over the
+	// override. Remove the markers for the length of this test.
+	for _, kv := range os.Environ() {
+		name, value, _ := strings.Cut(kv, "=")
+		if IsAgentMarker(name) {
+			t.Setenv(name, value)
+			os.Unsetenv(name)
+		}
+	}
 	t.Setenv(EnvOverride, "human")
 	if got := Detect(); got.Caller != Human {
 		t.Errorf("got %s, want human", got.Caller)
@@ -212,5 +247,21 @@ func TestDetectReadsTheRealEnvironment(t *testing.T) {
 	t.Setenv(EnvOverride, "agent")
 	if got := Detect(); got.Caller != Agent {
 		t.Errorf("got %s, want agent", got.Caller)
+	}
+}
+
+func TestIsAgentMarker(t *testing.T) {
+	for name, want := range map[string]bool{
+		"CLAUDECODE":      true,
+		"AIDER_MODEL":     true,
+		"AIDER_":          true,
+		"AIDER":           false,
+		"CODEXNOTAMARKER": false,
+		"CI":              false,
+		"HOME":            false,
+	} {
+		if got := IsAgentMarker(name); got != want {
+			t.Errorf("IsAgentMarker(%q) = %v, want %v", name, got, want)
+		}
 	}
 }

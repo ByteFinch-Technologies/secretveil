@@ -84,6 +84,10 @@ with the least power.
 A build server has no terminal, which is also true of an agent. Set `SECRETVEIL_CALLER=ci` so
 the decision is a fact and not a guess. It is recorded in the audit log either way.
 
+The marker of an AI tool wins over `SECRETVEIL_CALLER` and over the pipeline markers. A
+pipeline step that runs an AI tool is an agent, and the command rules apply to it. Run
+`secretveil doctor` in the step to see which marker it found.
+
 `restore` and `get --reveal` need a human caller and are refused in CI. That is deliberate:
 each of them writes a plaintext secret where something can read it.
 
