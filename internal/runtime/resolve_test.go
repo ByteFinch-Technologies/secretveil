@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 	"github.com/ByteFinch-Technologies/secretveil/internal/store"
 )
 
@@ -46,13 +47,13 @@ func value(env []string, key string) (string, bool) {
 func TestAHandleBecomesTheRealValue(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, ".env", "API_KEY=sv://api_key\nPORT=3000\n")
-	st := memStore(t, map[string]string{"api_key": "sk-live-0123456789"})
+	st := memStore(t, map[string]string{"api_key": fixture.Value(t, "stored")})
 
 	res, err := Resolve(context.Background(), st, Options{Dir: dir, Parent: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := value(res.Env, "API_KEY"); got != "sk-live-0123456789" {
+	if got, _ := value(res.Env, "API_KEY"); got != fixture.Value(t, "stored") {
 		t.Fatalf("API_KEY is %q", got)
 	}
 	if got, _ := value(res.Env, "PORT"); got != "3000" {
@@ -61,7 +62,7 @@ func TestAHandleBecomesTheRealValue(t *testing.T) {
 	if res.Handles != 1 {
 		t.Fatalf("the pass replaced %d handles, want 1", res.Handles)
 	}
-	if res.Values["api_key"] != "sk-live-0123456789" {
+	if res.Values["api_key"] != fixture.Value(t, "stored") {
 		t.Fatal("the value for the filter is missing")
 	}
 }
@@ -145,7 +146,7 @@ func TestTheLocalFileWinsOverTheMainFile(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, ".env", "API_KEY=sv://api_key\nPORT=3000\n")
 	write(t, dir, ".env.local", "PORT=4000\n")
-	st := memStore(t, map[string]string{"api_key": "sk-live-0123456789"})
+	st := memStore(t, map[string]string{"api_key": fixture.Value(t, "stored")})
 
 	res, err := Resolve(context.Background(), st, Options{Dir: dir, Parent: []string{}})
 	if err != nil {

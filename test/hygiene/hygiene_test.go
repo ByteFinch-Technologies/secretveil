@@ -44,26 +44,16 @@ const minCandidate = 16
 // arriving, and the rows below are a list of work to do. Do not add a row for
 // new code: generate the value instead, as internal/corpus does.
 var allowed = map[string]string{
-	// One fixture, "sk-" and a word and sixteen characters, is used as the
-	// example secret across the test suite. It is invented and it is not the
-	// shape that the vendor issues, which is why no scanner has ever raised it.
-	// Our own rule still reads it as one, so it has to go. Replacing it touches
-	// eight files and changes what several tests measure, so it is its own
-	// change and not a line in this one.
-	"internal/migrate/apply_test.go\tvalue-openai-key":       "the shared test fixture. Replace it.",
-	"internal/migrate/restore_test.go\tvalue-openai-key":     "the shared test fixture. Replace it.",
-	"internal/migrate/rename_test.go\tvalue-openai-key":      "the shared test fixture. Replace it.",
-	"internal/runtime/unread_test.go\tvalue-openai-key":      "the shared test fixture. Replace it.",
-	"internal/runtime/run_test.go\tvalue-openai-key":         "the shared test fixture. Replace it.",
-	"internal/audit/audit_test.go\tvalue-openai-key":         "the shared test fixture. Replace it.",
-	"internal/classify/classify_test.go\tvalue-openai-key":   "the shared test fixture. Replace it.",
-	"test/adversarial/adversarial_test.go\tvalue-openai-key": "the shared test fixture. Replace it.",
-	"docs/how-it-works.html\tvalue-openai-key":               "the same fixture, shown in the document. Replace it.",
+	// The shared test fixture, "sk-" and a word and sixteen characters, is gone
+	// from every test. Each test now takes its own value from internal/fixture.
+	// The document keeps the old value as its example, and no test uses it.
+	"docs/how-it-works.html\tvalue-openai-key": "the example value of the document. No test uses it.",
 
 	// The classifier's own tests give one example of each vendor shape. These
 	// are the rows that PR 2 could not remove, because a test of a shape rule
 	// needs a value of that shape. The corpus generator answers this, and
 	// TestEveryVendorShapeIsRecognised already reads from it.
+	"internal/classify/classify_test.go\tvalue-openai-key":        "a shape example. Read it from internal/corpus.",
 	"internal/classify/classify_test.go\tvalue-aws-access-key-id": "a shape example. Read it from internal/corpus.",
 	"internal/classify/classify_test.go\tvalue-stripe-live-key":   "a shape example. Read it from internal/corpus.",
 	"internal/classify/classify_test.go\tvalue-slack-token":       "a shape example. Read it from internal/corpus.",

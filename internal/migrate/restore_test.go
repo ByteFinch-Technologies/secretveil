@@ -7,24 +7,29 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
-// fixture is one project shape that the round trip must survive.
+// projects gives each project shape that the round trip must survive.
 //
 // Every value in these files is invented. None of them is a real credential.
-var fixture = map[string]map[string]string{
-	"a plain node project": {
-		".env": `NODE_ENV=development
-PORT=3000
-API_KEY=sk-live-Q9xR2mVn7pLwT4aZ
-DATABASE_URL=postgres://app:s3cr3t-p4ssw0rd-x9@db.internal:5432/app
-STRIPE_PUBLISHABLE_KEY=pk_test_51H8vKmLpQrStUvWxYz
-`,
-	},
-	"a project with comments, blank lines and quotes": {
-		".env": `# The API layer.
+// The values of API_KEY come from the test that asks, so no other test holds
+// them.
+func projects(t testing.TB) map[string]map[string]string {
+	t.Helper()
+	return map[string]map[string]string{
+		"a plain node project": {
+			".env": "NODE_ENV=development\n" +
+				"PORT=3000\n" +
+				"API_KEY=" + fixture.Value(t, "stored") + "\n" +
+				"DATABASE_URL=postgres://app:s3cr3t-p4ssw0rd-x9@db.internal:5432/app\n" +
+				"STRIPE_PUBLISHABLE_KEY=pk_test_51H8vKmLpQrStUvWxYz\n",
+		},
+		"a project with comments, blank lines and quotes": {
+			".env": `# The API layer.
 
-API_KEY="sk-live-Q9xR2mVn7pLwT4aZ"    # rotate this every quarter
+API_KEY="` + fixture.Value(t, "stored") + `"    # rotate this every quarter
 export SECRET_TOKEN='tok_9x8Kd2LmNpQrS4tU'
 
 # Nothing below here matters.
@@ -32,55 +37,55 @@ DEBUG=true
 EMPTY=
 SPACED = value with spaces
 `,
-		".env.local": `API_KEY=sk-live-LOCALvalue123456
-`,
-	},
-	"a monorepo with three services": {
-		"services/api/.env":    "DB_PASSWORD=p4ss-api-Xy9Lm2Qr\nPORT=8080\n",
-		"services/worker/.env": "DB_PASSWORD=p4ss-worker-Ab7Cd3Ef\nQUEUE=default\n",
-		"services/web/.env":    "NEXT_PUBLIC_URL=https://example.com\nSESSION_SECRET=sess-Gh4Ij5Kl6Mn7Op8Q\n",
-	},
-	"a file that names one key twice": {
-		".env": `# The first assignment is dead. A loader reads the last one.
-API_KEY=Zx91qLbT4vNs7Kd2FhWm0PjR
+			".env.local": "API_KEY=" + fixture.Value(t, "local") + "\n",
+		},
+		"a monorepo with three services": {
+			"services/api/.env":    "DB_PASSWORD=p4ss-api-Xy9Lm2Qr\nPORT=8080\n",
+			"services/worker/.env": "DB_PASSWORD=p4ss-worker-Ab7Cd3Ef\nQUEUE=default\n",
+			"services/web/.env":    "NEXT_PUBLIC_URL=https://example.com\nSESSION_SECRET=sess-Gh4Ij5Kl6Mn7Op8Q\n",
+		},
+		"a file that names one key twice": {
+			".env": `# The first assignment is dead. A loader reads the last one.
+API_KEY=` + fixture.Value(t, "dead") + `
 DB_PASSWORD=p4ss-Xy9Lm2Qr-Ab7Cd3
-API_KEY="Ge72uPdA8wFn3Jm5RcVt6Byq"    # the one that wins
+API_KEY="` + fixture.Value(t, "winner") + `"    # the one that wins
 `,
-	},
-	"a file with windows line endings and no final newline": {
-		".env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\r\nPORT=3000\r\nTOKEN=tok_9x8Kd2LmNpQrS4tU",
-	},
-	"a file with a multi-line value": {
-		".env": `PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+		},
+		"a file with windows line endings and no final newline": {
+			".env": "API_KEY=" + fixture.Value(t, "stored") + "\r\nPORT=3000\r\nTOKEN=tok_9x8Kd2LmNpQrS4tU",
+		},
+		"a file with a multi-line value": {
+			".env": `PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
 this-is-not-a-key-it-is-a-fixture-for-the-restore-test
 -----END PRIVATE KEY-----"
 PORT=3000
 `,
-	},
-	"a node project with a registry token": {
-		".env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		".npmrc": `registry=https://registry.npmjs.org/
-//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B
+		},
+		"a node project with a registry token": {
+			".env": "API_KEY=" + fixture.Value(t, "stored") + "\n",
+			".npmrc": `registry=https://registry.npmjs.org/
+//registry.npmjs.org/:_authToken=` + npmToken(t) + `
 save-exact=true
 `,
-		"package.json": "{\n  \"name\": \"app\"\n}\n",
-	},
-	"a project with two registries and a comment": {
-		".env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		".npmrc": `# The public registry.
-//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B
+			"package.json": "{\n  \"name\": \"app\"\n}\n",
+		},
+		"a project with two registries and a comment": {
+			".env": "API_KEY=" + fixture.Value(t, "stored") + "\n",
+			".npmrc": `# The public registry.
+//registry.npmjs.org/:_authToken=` + npmToken(t) + `
 
 ; The private one.
 @acme:registry=https://npm.pkg.github.com/
 //npm.pkg.github.com/:_authToken=ghp_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf
 `,
-	},
-	"a workspace whose .npmrc is not at the top": {
-		".env":                  "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		"packages/api/.npmrc":   "//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\r\n",
-		"packages/web/.npmrc":   "//registry.npmjs.org/:_authToken=npm_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf",
-		"packages/api/index.js": "console.log('hello')\n",
-	},
+		},
+		"a workspace whose .npmrc is not at the top": {
+			".env":                  "API_KEY=" + fixture.Value(t, "stored") + "\n",
+			"packages/api/.npmrc":   "//registry.npmjs.org/:_authToken=" + npmToken(t) + "\r\n",
+			"packages/web/.npmrc":   "//registry.npmjs.org/:_authToken=" + fixture.Value(t, "web"),
+			"packages/api/index.js": "console.log('hello')\n",
+		},
+	}
 }
 
 // TestInitThenRestoreGivesBackTheSameBytes is a release gate.
@@ -89,7 +94,7 @@ save-exact=true
 // secretveil and does not like it must get the exact file back, and a diff
 // must show nothing at all.
 func TestInitThenRestoreGivesBackTheSameBytes(t *testing.T) {
-	for name, files := range fixture {
+	for name, files := range projects(t) {
 		t.Run(name, func(t *testing.T) {
 			root := project(t, files)
 			before := snapshotTree(t, root)
@@ -145,8 +150,8 @@ func TestRestoreCountsEveryHandle(t *testing.T) {
 		body string
 		want int
 	}{
-		{"one handle on one line", "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n", 1},
-		{"two handles in two lines", "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\nTOKEN=tok_9x8Kd2LmNpQrS4tU\n", 2},
+		{"one handle on one line", "API_KEY=" + fixture.Value(t, "stored") + "\n", 1},
+		{"two handles in two lines", "API_KEY=" + fixture.Value(t, "stored") + "\nTOKEN=tok_9x8Kd2LmNpQrS4tU\n", 2},
 		{"a handle inside a longer value", "DATABASE_URL=postgres://app:s3cr3t-p4ssw0rd-x9@db.internal:5432/app\n", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,7 +172,7 @@ func TestRestoreCountsEveryHandle(t *testing.T) {
 }
 
 func TestRestoreStopsWhenTheStoreIsMissingAValue(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	st := newFakeStore()
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err != nil {
 		t.Fatal(err)
@@ -191,7 +196,7 @@ func TestRestoreStopsWhenTheStoreIsMissingAValue(t *testing.T) {
 }
 
 func TestARestoreDryRunWritesNothing(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	st := newFakeStore()
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err != nil {
 		t.Fatal(err)
@@ -211,7 +216,7 @@ func TestARestoreDryRunWritesNothing(t *testing.T) {
 }
 
 func TestRestoreKeepsACommentTheDeveloperWrote(t *testing.T) {
-	body := "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ    # rotate this every quarter\n"
+	body := "API_KEY=" + fixture.Value(t, "stored") + "    # rotate this every quarter\n"
 	root := project(t, map[string]string{".env": body})
 	st := newFakeStore()
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err != nil {
@@ -264,14 +269,15 @@ func snapshotTree(t *testing.T, root string) map[string]string {
 // file with nothing to migrate, which would make the round trip pass for the
 // wrong reason.
 func TestEveryFixtureHasASecret(t *testing.T) {
-	names := make([]string, 0, len(fixture))
-	for name := range fixture {
+	shapes := projects(t)
+	names := make([]string, 0, len(shapes))
+	for name := range shapes {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
 	for _, name := range names {
-		root := project(t, fixture[name])
+		root := project(t, shapes[name])
 		plan, err := BuildPlan(root)
 		if err != nil {
 			t.Fatal(err)

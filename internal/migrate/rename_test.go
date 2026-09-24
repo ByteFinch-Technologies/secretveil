@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
 // TestARenamedReferenceNamesTheEnvironment guards the fault this test file was
@@ -17,9 +19,9 @@ import (
 // value, which is the one thing the name is for.
 func TestARenamedReferenceNamesTheEnvironment(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":             "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		".env.development": "API_KEY=sk-dev-M4nB7vC2xZ9qW5eRt7Y\n",
-		".env.local":       "API_KEY=sk-loc-P8kL3jH6gF1dS4aQw2\n",
+		".env":             "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		".env.development": "API_KEY=" + fixture.Value(t, "development") + "\n",
+		".env.local":       "API_KEY=" + fixture.Value(t, "local") + "\n",
 	})
 	res, err := Apply(context.Background(), newFakeStore(), Options{Root: root})
 	if err != nil {
@@ -51,8 +53,8 @@ func TestARenamedReferenceNamesTheEnvironment(t *testing.T) {
 // no rename at all.
 func TestEachFileHoldsItsOwnHandle(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":             "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		".env.development": "API_KEY=sk-dev-M4nB7vC2xZ9qW5eRt7Y\n",
+		".env":             "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		".env.development": "API_KEY=" + fixture.Value(t, "development") + "\n",
 	})
 	st := newFakeStore()
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err != nil {
@@ -63,7 +65,7 @@ func TestEachFileHoldsItsOwnHandle(t *testing.T) {
 	if !strings.Contains(dev, "sv://env_development_api_key") {
 		t.Fatalf(".env.development holds the wrong handle:\n%s", dev)
 	}
-	if st.values["env_development_api_key"] != "sk-dev-M4nB7vC2xZ9qW5eRt7Y" {
+	if st.values["env_development_api_key"] != fixture.Value(t, "development") {
 		t.Fatalf("the store holds the wrong value: %v", st.values)
 	}
 }
@@ -72,8 +74,8 @@ func TestEachFileHoldsItsOwnHandle(t *testing.T) {
 // same file name need the directory to tell them apart.
 func TestASubdirectoryStaysInTheName(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":          "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		"apps/web/.env": "API_KEY=sk-web-M4nB7vC2xZ9qW5eRt\n",
+		".env":          "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		"apps/web/.env": "API_KEY=" + fixture.Value(t, "web") + "\n",
 	})
 	res, err := Apply(context.Background(), newFakeStore(), Options{Root: root})
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
 // A .env file that names one key twice is common. A developer adds a value at
@@ -18,8 +20,8 @@ import (
 // init printed a success and exited 0.
 
 func TestADuplicateKeyLeavesNoValueInTheClear(t *testing.T) {
-	const first = "Zx91qLbT4vNs7Kd2FhWm0PjR"
-	const last = "Ge72uPdA8wFn3Jm5RcVt6Byq"
+	first := fixture.Value(t, "dead")
+	last := fixture.Value(t, "winner")
 	root := project(t, map[string]string{
 		".env": "API_KEY=" + first + "\nPORT=3000\nAPI_KEY=" + last + "\n",
 	})
@@ -53,8 +55,8 @@ func TestADuplicateKeyLeavesNoValueInTheClear(t *testing.T) {
 // back the value the program had before the migration, or the migration
 // changed what the program does.
 func TestADuplicateKeyKeepsTheValueTheLoaderReads(t *testing.T) {
-	const first = "Zx91qLbT4vNs7Kd2FhWm0PjR"
-	const last = "Ge72uPdA8wFn3Jm5RcVt6Byq"
+	first := fixture.Value(t, "dead")
+	last := fixture.Value(t, "winner")
 	root := project(t, map[string]string{
 		".env": "API_KEY=" + first + "\nAPI_KEY=" + last + "\n",
 	})
@@ -73,7 +75,7 @@ func TestADuplicateKeyKeepsTheValueTheLoaderReads(t *testing.T) {
 // One name for one value is correct. A key that is written twice with the same
 // value is not a collision, and it must not produce a second name.
 func TestADuplicateKeyWithOneValueTakesOneName(t *testing.T) {
-	const value = "Zx91qLbT4vNs7Kd2FhWm0PjR"
+	value := fixture.Value(t, "stored")
 	root := project(t, map[string]string{
 		".env": "API_KEY=" + value + "\nAPI_KEY=" + value + "\n",
 	})

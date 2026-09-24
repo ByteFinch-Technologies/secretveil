@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
 // fakeStore is a store that keeps its payload in memory and can pretend to
@@ -110,18 +112,21 @@ func read(t *testing.T, path string) string {
 	return string(body)
 }
 
-// The .env file for most of these tests. It holds one open value, one whole
-// secret and one credential inside a longer value.
-const sampleEnv = `# the service
-NODE_ENV=development
-PORT=3000
-API_KEY=sk-live-Q9xR2mVn7pLwT4aZ
-DATABASE_URL=postgres://app:s3cr3t-p4ssw0rd-x9@db.internal:5432/app
-PUBLIC_URL=https://example.com
-`
+// sampleEnv is the .env file for most of these tests. It holds one open
+// value, one whole secret and one credential inside a longer value. The whole
+// secret is the "stored" value of the test that asks for the file.
+func sampleEnv(t testing.TB) string {
+	t.Helper()
+	return "# the service\n" +
+		"NODE_ENV=development\n" +
+		"PORT=3000\n" +
+		"API_KEY=" + fixture.Value(t, "stored") + "\n" +
+		"DATABASE_URL=postgres://app:s3cr3t-p4ssw0rd-x9@db.internal:5432/app\n" +
+		"PUBLIC_URL=https://example.com\n"
+}
 
 func TestTheMigrationReplacesTheSecretsAndKeepsTheRest(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	st := newFakeStore()
 
 	res, err := Apply(context.Background(), st, Options{Root: root})
@@ -130,7 +135,7 @@ func TestTheMigrationReplacesTheSecretsAndKeepsTheRest(t *testing.T) {
 	}
 	out := read(t, filepath.Join(root, ".env"))
 
-	for _, gone := range []string{"sk-live-Q9xR2mVn7pLwT4aZ", "s3cr3t-p4ssw0rd-x9"} {
+	for _, gone := range []string{fixture.Value(t, "stored"), "s3cr3t-p4ssw0rd-x9"} {
 		if strings.Contains(out, gone) {
 			t.Fatalf("a secret is still in the file:\n%s", out)
 		}
@@ -150,7 +155,7 @@ func TestTheMigrationReplacesTheSecretsAndKeepsTheRest(t *testing.T) {
 	if len(res.Refs) != 2 {
 		t.Fatalf("the store holds %v", res.Refs)
 	}
-	if st.values["api_key"] != "sk-live-Q9xR2mVn7pLwT4aZ" {
+	if st.values["api_key"] != fixture.Value(t, "stored") {
 		t.Fatalf("the store holds the wrong value for api_key")
 	}
 }
@@ -162,7 +167,7 @@ func TestTheMigrationReplacesTheSecretsAndKeepsTheRest(t *testing.T) {
 // the value, the second run puts the handle itself into the store as if it
 // were the value.
 func TestASecondMigrationIsANoOp(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	st := newFakeStore()
 
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err != nil {
@@ -205,7 +210,7 @@ func TestASecondMigrationIsANoOp(t *testing.T) {
 }
 
 func TestTheBackupIsGoneAfterASuccess(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	res, err := Apply(context.Background(), newFakeStore(), Options{Root: root})
 	if err != nil {
 		t.Fatal(err)
@@ -218,11 +223,11 @@ func TestTheBackupIsGoneAfterASuccess(t *testing.T) {
 		t.Fatalf("a plaintext backup is still on disk: %v", entries)
 	}
 	// Nothing under .secretveil may hold the plaintext.
-	assertNoPlaintext(t, filepath.Join(root, ".secretveil"), "sk-live-Q9xR2mVn7pLwT4aZ")
+	assertNoPlaintext(t, filepath.Join(root, ".secretveil"), fixture.Value(t, "stored"))
 }
 
 func TestKeepBackupLeavesTheOriginal(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	res, err := Apply(context.Background(), newFakeStore(), Options{Root: root, KeepBackup: true})
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +236,7 @@ func TestKeepBackupLeavesTheOriginal(t *testing.T) {
 		t.Fatal("the result names no backup")
 	}
 	got := read(t, filepath.Join(res.Backup, ".env"))
-	if got != sampleEnv {
+	if got != sampleEnv(t) {
 		t.Fatalf("the backup does not match the original:\n%s", got)
 	}
 	if _, err := os.Stat(filepath.Join(res.Backup, ManifestFile)); err != nil {
@@ -240,13 +245,13 @@ func TestKeepBackupLeavesTheOriginal(t *testing.T) {
 }
 
 func TestADryRunWritesNothing(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	st := newFakeStore()
 	res, err := Apply(context.Background(), st, Options{Root: root, DryRun: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := read(t, filepath.Join(root, ".env")); got != sampleEnv {
+	if got := read(t, filepath.Join(root, ".env")); got != sampleEnv(t) {
 		t.Fatalf("the file changed:\n%s", got)
 	}
 	if len(st.values) != 0 {
@@ -258,21 +263,21 @@ func TestADryRunWritesNothing(t *testing.T) {
 }
 
 func TestAFailedStoreWriteLeavesTheFilesAlone(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	st := newFakeStore()
 	st.failSet = true
 
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err == nil {
 		t.Fatal("the migration must fail when the store refuses the write")
 	}
-	if got := read(t, filepath.Join(root, ".env")); got != sampleEnv {
+	if got := read(t, filepath.Join(root, ".env")); got != sampleEnv(t) {
 		t.Fatalf("the file changed after a failure:\n%s", got)
 	}
 	assertNoBackupLeft(t, root)
 }
 
 func TestAStoreThatGivesBackTheWrongValueStopsTheMigration(t *testing.T) {
-	root := project(t, map[string]string{".env": sampleEnv})
+	root := project(t, map[string]string{".env": sampleEnv(t)})
 	st := newFakeStore()
 	st.corrupt = "api_key"
 
@@ -283,7 +288,7 @@ func TestAStoreThatGivesBackTheWrongValueStopsTheMigration(t *testing.T) {
 	if !strings.Contains(err.Error(), "verify the store") {
 		t.Fatalf("the error does not name the phase: %v", err)
 	}
-	if got := read(t, filepath.Join(root, ".env")); got != sampleEnv {
+	if got := read(t, filepath.Join(root, ".env")); got != sampleEnv(t) {
 		t.Fatalf("the file changed after a failure:\n%s", got)
 	}
 	if len(st.values) != 0 {
@@ -294,8 +299,8 @@ func TestAStoreThatGivesBackTheWrongValueStopsTheMigration(t *testing.T) {
 
 func TestASecretInAnotherFileIsReportedAndNotChanged(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":               sampleEnv,
-		"docker-compose.yml": "environment:\n  API_KEY: sk-live-Q9xR2mVn7pLwT4aZ\n",
+		".env":               sampleEnv(t),
+		"docker-compose.yml": "environment:\n  API_KEY: " + fixture.Value(t, "stored") + "\n",
 	})
 	res, err := Apply(context.Background(), newFakeStore(), Options{Root: root})
 	if err != nil {
@@ -309,15 +314,15 @@ func TestASecretInAnotherFileIsReportedAndNotChanged(t *testing.T) {
 	}
 	// The migration owns the .env files and nothing else. The other file is a
 	// finding for the human, and a silent edit would be worse than a report.
-	if !strings.Contains(read(t, filepath.Join(root, "docker-compose.yml")), "sk-live-Q9xR2mVn7pLwT4aZ") {
+	if !strings.Contains(read(t, filepath.Join(root, "docker-compose.yml")), fixture.Value(t, "stored")) {
 		t.Fatal("the migration changed a file it does not own")
 	}
 }
 
 func TestTwoFilesThatWantOneNameGetTwoNames(t *testing.T) {
 	root := project(t, map[string]string{
-		"api/.env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		"web/.env": "API_KEY=sk-live-DIFFERENT-VALUE1\n",
+		"api/.env": "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		"web/.env": "API_KEY=" + fixture.Value(t, "second file") + "\n",
 	})
 	st := newFakeStore()
 	res, err := Apply(context.Background(), st, Options{Root: root})
@@ -335,15 +340,15 @@ func TestTwoFilesThatWantOneNameGetTwoNames(t *testing.T) {
 	for _, v := range st.values {
 		values[v] = true
 	}
-	if !values["sk-live-Q9xR2mVn7pLwT4aZ"] || !values["sk-live-DIFFERENT-VALUE1"] {
+	if !values[fixture.Value(t, "stored")] || !values[fixture.Value(t, "second file")] {
 		t.Fatalf("a value was lost: %v", st.values)
 	}
 }
 
 func TestTwoFilesWithTheSameValueShareOneName(t *testing.T) {
 	root := project(t, map[string]string{
-		"api/.env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		"web/.env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
+		"api/.env": "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		"web/.env": "API_KEY=" + fixture.Value(t, "stored") + "\n",
 	})
 	st := newFakeStore()
 	res, err := Apply(context.Background(), st, Options{Root: root})
@@ -360,7 +365,7 @@ func TestTwoFilesWithTheSameValueShareOneName(t *testing.T) {
 
 func TestTheIgnoreFileCoversTheSecretDirectory(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":       sampleEnv,
+		".env":       sampleEnv(t),
 		".git/HEAD":  "ref: refs/heads/main\n",
 		".gitignore": "node_modules/\n",
 	})
@@ -385,7 +390,7 @@ func TestAProjectWithNoEnvFileIsAnError(t *testing.T) {
 
 func TestASampleFileIsNotTouched(t *testing.T) {
 	sample := "API_KEY=your-key-here\n"
-	root := project(t, map[string]string{".env": sampleEnv, ".env.example": sample})
+	root := project(t, map[string]string{".env": sampleEnv(t), ".env.example": sample})
 	if _, err := Apply(context.Background(), newFakeStore(), Options{Root: root}); err != nil {
 		t.Fatal(err)
 	}

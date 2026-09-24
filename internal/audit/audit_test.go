@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
 // project makes a root that already has a .secretveil directory.
@@ -163,7 +165,7 @@ func TestTheLogIsPrivate(t *testing.T) {
 }
 
 func TestRedact(t *testing.T) {
-	const long = "sk-live-Q9xR2mVn7pLwT4aZ8bC1dE3fG5hJ7kL9mN0pQ2rS4tU6"
+	long := fixture.Long(t, "argument")
 
 	cases := []struct {
 		name string
@@ -296,7 +298,7 @@ func TestRedact(t *testing.T) {
 // calls it.
 func TestWriteRedactsTheCommand(t *testing.T) {
 	root := project(t)
-	const value = "sk-live-Q9xR2mVn7pLwT4aZ8bC1dE3fG5hJ7kL9mN0pQ2rS4tU6"
+	value := fixture.Long(t, "argument")
 
 	if err := New(root).Write(Record{
 		Event:   EventRefused,

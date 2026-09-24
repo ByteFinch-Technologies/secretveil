@@ -25,22 +25,31 @@ import (
 	"filippo.io/age"
 
 	"github.com/ByteFinch-Technologies/secretveil/internal/detect"
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
-
-// The values below are invented. None of them is a real credential.
-const (
-	apiKey    = "sk-live-Q9xR2mVn7pLwT4aZ"
-	jwtSecret = "jw7-Zx9Kq2Lm4Np6Rt8Vw0Yb1Dc3Fg5H"
-)
-
-// envBody is the .env file every case starts from.
-const envBody = "NODE_ENV=development\n" +
-	"PORT=3000\n" +
-	"API_KEY=" + apiKey + "\n" +
-	"JWT_SECRET=" + jwtSecret + "\n"
 
 // secrets are the values that must never reach the output of an agent.
-var secrets = map[string]string{"API_KEY": apiKey, "JWT_SECRET": jwtSecret}
+//
+// They are invented, and none of them is a real credential. Each case has its
+// own values, so a check for a leak looks for the value that this case put in
+// the store, and not for a value that every case shares.
+func secrets(t testing.TB) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"API_KEY":    fixture.Value(t, "API_KEY"),
+		"JWT_SECRET": fixture.Value(t, "JWT_SECRET"),
+	}
+}
+
+// envBody is the .env file that a case starts from.
+func envBody(t testing.TB) string {
+	t.Helper()
+	v := secrets(t)
+	return "NODE_ENV=development\n" +
+		"PORT=3000\n" +
+		"API_KEY=" + v["API_KEY"] + "\n" +
+		"JWT_SECRET=" + v["JWT_SECRET"] + "\n"
+}
 
 // binary is the compiled secretveil, built once for the whole package.
 var binary string
@@ -90,7 +99,7 @@ func project(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	write(t, filepath.Join(root, "package.json"), "{}\n")
-	write(t, filepath.Join(root, ".env"), envBody)
+	write(t, filepath.Join(root, ".env"), envBody(t))
 
 	res := sv(t, root, nil, "init", "-y")
 	if res.code != 0 {
@@ -99,7 +108,7 @@ func project(t *testing.T) string {
 	// Every case relies on this. If the migration left a value behind, the
 	// case would pass for the wrong reason.
 	body := read(t, filepath.Join(root, ".env"))
-	for name, v := range secrets {
+	for name, v := range secrets(t) {
 		if strings.Contains(body, v) {
 			t.Fatalf("init left the value of %s in the .env file", name)
 		}
@@ -141,7 +150,7 @@ func sv(t *testing.T, root string, extra []string, args ...string) result {
 // mustNotLeak fails when any secret value is anywhere in the output.
 func mustNotLeak(t *testing.T, r result, note string) {
 	t.Helper()
-	for name, v := range secrets {
+	for name, v := range secrets(t) {
 		if strings.Contains(r.all(), v) {
 			t.Errorf("%s: the value of %s reached the output:\n%s", note, name, r.all())
 		}
@@ -211,7 +220,7 @@ func TestCase2bAWrapperDoesNotHideTheProgram(t *testing.T) {
 				t.Errorf("the refusal does not say what was refused:\n%s", r.all())
 			}
 			mustNotLeak(t, r, "case 2b")
-			for name, v := range secrets {
+			for name, v := range secrets(t) {
 				if strings.Contains(r.all(), backwards(v)) {
 					t.Errorf("the value of %s reached the output reversed:\n%s", name, r.all())
 				}
@@ -324,7 +333,7 @@ func TestCase5RevealNeedsAHumanAndIsRecorded(t *testing.T) {
 	if !strings.Contains(log, "refused") {
 		t.Fatalf("the audit line does not say it was refused:\n%s", log)
 	}
-	for name, v := range secrets {
+	for name, v := range secrets(t) {
 		if strings.Contains(log, v) {
 			t.Fatalf("the audit log holds the value of %s", name)
 		}
@@ -354,7 +363,7 @@ func TestCase5bAnAgentMayNotRemoveOrReplaceAValue(t *testing.T) {
 
 	// The store is as it was.
 	r = sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "get", "--reveal", "api_key")
-	if r.code != 0 || r.stdout != apiKey {
+	if r.code != 0 || r.stdout != secrets(t)["API_KEY"] {
 		t.Fatalf("the value of api_key changed:\n%s", r.all())
 	}
 
@@ -370,7 +379,7 @@ func TestCase5bAnAgentMayNotRemoveOrReplaceAValue(t *testing.T) {
 			t.Errorf("the audit log does not hold %s:\n%s", want, log)
 		}
 	}
-	for _, v := range []string{apiKey, jwtSecret, "attacker.example"} {
+	for _, v := range []string{secrets(t)["API_KEY"], secrets(t)["JWT_SECRET"], "attacker.example"} {
 		if strings.Contains(log, v) {
 			t.Fatalf("the audit log holds a value:\n%s", log)
 		}
@@ -454,7 +463,7 @@ func TestCase6AValueWrittenToAFileIsNotProtected(t *testing.T) {
 
 	// And the documented limit holds: the file has the real value in it.
 	stolen := read(t, filepath.Join(root, "stolen.txt"))
-	if stolen != apiKey {
+	if stolen != secrets(t)["API_KEY"] {
 		t.Fatalf("this case records a known limit of the product, and the limit has changed.\n"+
 			"A child process could no longer write a secret to a file.\n"+
 			"If that is on purpose, rewrite this case and say so in the threat model.\n"+
@@ -492,7 +501,7 @@ func TestCase7AnAgentMayNotUndoTheMigration(t *testing.T) {
 	if !strings.Contains(log, `"event":"restore"`) || !strings.Contains(log, "refused") {
 		t.Fatalf("the refusal is not in the audit log:\n%s", log)
 	}
-	for name, v := range secrets {
+	for name, v := range secrets(t) {
 		if strings.Contains(log, v) {
 			t.Fatalf("the audit log holds the value of %s", name)
 		}
@@ -548,8 +557,8 @@ func TestAHumanKeepsTheUndo(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("a human could not undo the migration:\n%s", r.all())
 	}
-	if got := read(t, env); got != envBody {
-		t.Fatalf("restore did not give back the original file.\nwant %q\ngot  %q", envBody, got)
+	if got := read(t, env); got != envBody(t) {
+		t.Fatalf("restore did not give back the original file.\nwant %q\ngot  %q", envBody(t), got)
 	}
 }
 
@@ -624,7 +633,7 @@ func TestAnAgentCannotCallItselfAHuman(t *testing.T) {
 				t.Fatalf("an agent got a shell:\n%s", r.all())
 			}
 			mustNotLeak(t, r, "agent")
-			if strings.Contains(r.all(), reverse(apiKey)) {
+			if strings.Contains(r.all(), reverse(secrets(t)["API_KEY"])) {
 				t.Fatalf("the reversed value reached the output:\n%s", r.all())
 			}
 
@@ -657,7 +666,7 @@ func TestAnAgentCannotTurnThePolicyOff(t *testing.T) {
 		if !strings.Contains(r.stderr, "policy approve") {
 			t.Fatalf("the refusal does not say why the file did not apply:\n%s", r.all())
 		}
-		if strings.Contains(r.all(), reverse(apiKey)) {
+		if strings.Contains(r.all(), reverse(secrets(t)["API_KEY"])) {
 			t.Fatalf("the reversed value reached the output:\n%s", r.all())
 		}
 	}
