@@ -157,7 +157,19 @@ func runPipes(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher
 func runPTY(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher,
 	idle time.Duration, stdin io.Reader, stdout io.Writer) (*Result, error) {
 
-	ptmx, err := pty.Start(cmd)
+	// When standard input is a pipe or a file, the child reads it directly and
+	// the pseudo terminal carries the output only. A copy into the pseudo
+	// terminal cannot send the end of the input, so a child such as cat or psql
+	// waited for it forever, and the terminal echoed the input a second time.
+	// The controlling terminal is then descriptor 1, because descriptor 0 is
+	// not a terminal and the kernel refuses it.
+	keyboard := stdinIsTerminal(stdin)
+	attrs := &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if !keyboard {
+		cmd.Stdin = stdin
+		attrs.Ctty = 1
+	}
+	ptmx, err := pty.StartWithAttrs(cmd, nil, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +201,9 @@ func runPTY(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher,
 	// The keyboard copy is not in the wait group. A read from the keyboard
 	// blocks until the user types, and the user has nothing left to type once
 	// the child is gone.
-	go func() { _, _ = io.Copy(ptmx, stdin) }()
+	if keyboard {
+		go func() { _, _ = io.Copy(ptmx, stdin) }()
+	}
 
 	waitErr := cmd.Wait()
 	drainPTY(ptmx, &wg)
@@ -336,6 +350,12 @@ func makeRaw(stdin io.Reader) (func(), bool) {
 		return nil, false
 	}
 	return func() { _ = term.Restore(fd, old) }, true
+}
+
+// stdinIsTerminal reports whether standard input is a real terminal.
+func stdinIsTerminal(stdin io.Reader) bool {
+	f, ok := stdin.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
 }
 
 // isTerminal reports whether a stream is a real terminal.
