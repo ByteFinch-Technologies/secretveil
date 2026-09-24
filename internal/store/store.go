@@ -18,6 +18,10 @@ import (
 // ErrNotFound means the reference is not in the store.
 var ErrNotFound = errors.New("no such reference")
 
+// ErrExists means the reference already has a value, and the call was one
+// that may only add a new value.
+var ErrExists = errors.New("this reference already has a value")
+
 // ErrReadOnly means the backend can read a value but cannot write one.
 var ErrReadOnly = errors.New("this store is read only")
 

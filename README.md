@@ -294,10 +294,10 @@ equivalent for other runners.
 | `run -- <cmd>` | Run a program with the real values, and filter them out of its output. |
 | `doctor` | Check the setup of the project and say what to fix. |
 | `restore` | Put the plaintext values back. Gives the original file byte for byte. Needs a human caller. |
-| `set <ref>` | Put one secret in the store. |
+| `set <ref>` | Put one secret in the store. To replace a value needs a human caller. |
 | `list` | Print the name of every secret in the store. |
 | `get <ref>` | Print one plaintext value. Needs `--reveal` and a human caller. |
-| `rm <ref>` | Remove one secret from the store. |
+| `rm <ref>` | Remove one secret from the store. Needs a human caller. |
 | `policy approve` | Let a policy file that turns off a default rule apply to an agent. Needs a human caller. |
 | `version` | Print the version. |
 | `completion <shell>` | Print the autocompletion script for bash, zsh, fish or PowerShell. |

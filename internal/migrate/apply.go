@@ -60,8 +60,12 @@ func (p Phase) String() string {
 // Snapshot and RestoreSnapshot let the migration undo a write. A backend that
 // cannot do this cannot be a migration target, because a half written store is
 // worse than no store.
+//
+// List lets the migration see the names that the store already holds, so that
+// a second init gives a new name to a new value and never replaces one.
 type SecretStore interface {
 	Get(ctx context.Context, ref string) (string, error)
+	List(ctx context.Context) ([]string, error)
 	SetMany(ctx context.Context, values map[string]string) error
 	Snapshot() ([]byte, error)
 	RestoreSnapshot(snap []byte) error
@@ -175,13 +179,29 @@ func Apply(ctx context.Context, st SecretStore, opt Options) (*Result, error) {
 	if len(plan.Files) == 0 {
 		return nil, errors.New("there is no .env or .npmrc file with values here")
 	}
+	// A second init runs on a store that already holds values. A name that
+	// the store holds is taken, so a new value under that name gets a new
+	// name, and the value in the store stays. Without this, a new
+	// .env.local with DB_PASS=x replaced the stored db_pass, and every
+	// handle to it then gave the new value.
+	held, err := storedValues(ctx, st)
+	if err != nil {
+		return nil, fmt.Errorf("the phase %q failed, because the store could not be read: %w", PhasePlan, err)
+	}
 	// The names are settled before the values are read. resolveCollisions
 	// needs the plan and not the values, and reading once under the final
 	// names lets Secrets hold every reference to one value.
-	renamed := resolveCollisions(plan, root)
+	renamed := resolveCollisions(plan, root, held)
 	secrets, err := plan.Secrets(os.ReadFile)
 	if err != nil {
 		return nil, fmt.Errorf("the phase %q failed: %w", PhasePlan, err)
+	}
+	for ref, v := range secrets {
+		if old, ok := held[ref]; ok && old != v {
+			return nil, fmt.Errorf(
+				"the phase %q failed: the store holds a different value for %s, and init does not replace a value",
+				PhasePlan, ref)
+		}
 	}
 	res := &Result{Plan: plan, Refs: sortedKeys(secrets), Renamed: renamed}
 	logf(PhasePlan, "%d file(s), %d secret(s)", len(plan.Files), len(secrets))
@@ -387,13 +407,34 @@ func rewriteDotenv(src []byte, f FilePlan) ([]byte, bool, error) {
 	return parsed.Bytes(), true, nil
 }
 
+// storedValues returns every value that the store holds, by reference.
+func storedValues(ctx context.Context, st SecretStore) (map[string]string, error) {
+	refs, err := st.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		v, err := st.Get(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		out[ref] = v
+	}
+	return out, nil
+}
+
 // resolveCollisions gives a new name to a reference that two variables claim
 // with two different values.
 //
 // A reference that two variables claim with the same value is not a collision.
 // One name for one value is correct, and it is what a developer expects when
 // the same database password appears in two services.
-func resolveCollisions(p *Plan, root string) []Rename {
+//
+// A reference that the store already holds is taken as well. An owner whose
+// value is the stored value keeps the name. Every other owner gets a new one,
+// so a second init never replaces a value in the store.
+func resolveCollisions(p *Plan, root string, held map[string]string) []Rename {
 	type owner struct {
 		file  int
 		entry int
@@ -429,6 +470,9 @@ func resolveCollisions(p *Plan, root string) []Rename {
 	for ref := range owners {
 		taken[ref] = true
 	}
+	for ref := range held {
+		taken[ref] = true
+	}
 	var renamed []Rename
 
 	refs := make([]string, 0, len(owners))
@@ -439,22 +483,18 @@ func resolveCollisions(p *Plan, root string) []Rename {
 
 	for _, ref := range refs {
 		list := owners[ref]
-		if len(list) < 2 {
-			continue
+		// The value that keeps the plain name is the one in the store, or
+		// else the value of the first owner. Every owner with a different
+		// value gets the name of its file in front, so the new name still
+		// reads well.
+		keep, stored := held[ref]
+		if !stored {
+			keep = list[0].part
 		}
-		same := true
-		for _, o := range list[1:] {
-			if o.part != list[0].part {
-				same = false
-				break
+		for _, o := range list {
+			if o.part == keep {
+				continue
 			}
-		}
-		if same {
-			continue
-		}
-		// The first owner keeps the plain name. Every other owner gets the
-		// name of its file in front, so the new name still reads well.
-		for _, o := range list[1:] {
 			kind := p.Files[o.file].kind()
 			where := rel(root, p.Files[o.file].Path)
 			base := renameRef(kind, ref, fileTag(kind, where))

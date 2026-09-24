@@ -232,6 +232,14 @@ exist.
 The rule this leaves behind, for every command added later: **a command that can put a value
 where a file can hold it needs a human caller.**
 
+The same reasoning applies to a change to the store. `rm` loses a value for good, and a new
+value under an old name can send a program to a host that the agent controls. Neither shows
+a value, so the output filter has nothing to catch. So `rm` needs a human caller, and so does
+a `set` that replaces a value. A `set` of a new reference stays open to an agent, because it
+replaces nothing. A second `init` never replaces a stored value: a different value under a
+name the store holds gets a new name. Each write, each removal and each refusal goes into the
+audit log, with the reference and never the value.
+
 ### 3.6 A file outside the project
 
 secretveil never follows a symbolic link. A link can point anywhere on the machine, and

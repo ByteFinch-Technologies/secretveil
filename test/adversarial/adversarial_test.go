@@ -331,6 +331,97 @@ func TestCase5RevealNeedsAHumanAndIsRecorded(t *testing.T) {
 	}
 }
 
+// Case 5b. rm and a replace by set change the store in a way only the
+// developer should, from issue 56. A delete loses a secret, and a new value can
+// send a program to a host that the agent controls. Neither shows a value, so
+// the output filter has nothing to catch.
+func TestCase5bAnAgentMayNotRemoveOrReplaceAValue(t *testing.T) {
+	root := project(t)
+	evil := filepath.Join(t.TempDir(), "value")
+	write(t, evil, "postgres://attacker.example/db")
+
+	r := sv(t, root, nil, "rm", "-y", "api_key")
+	if r.code == 0 {
+		t.Fatalf("an agent removed a value:\n%s", r.all())
+	}
+	r = sv(t, root, nil, "set", "api_key", "--from-file", evil)
+	if r.code == 0 {
+		t.Fatalf("an agent replaced a value:\n%s", r.all())
+	}
+	if !strings.Contains(r.stderr, "human") {
+		t.Errorf("the refusal does not say who may do it:\n%s", r.all())
+	}
+
+	// The store is as it was.
+	r = sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "get", "--reveal", "api_key")
+	if r.code != 0 || r.stdout != apiKey {
+		t.Fatalf("the value of api_key changed:\n%s", r.all())
+	}
+
+	// A new reference replaces nothing, so an agent may add it.
+	r = sv(t, root, nil, "set", "new_ref", "--from-file", evil)
+	if r.code != 0 {
+		t.Fatalf("an agent could not add a new reference:\n%s", r.all())
+	}
+
+	log := read(t, filepath.Join(root, ".secretveil", "audit.log"))
+	for _, want := range []string{`"event":"delete"`, `"event":"write"`, "refused", `"detail":"added"`} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the audit log does not hold %s:\n%s", want, log)
+		}
+	}
+	for _, v := range []string{apiKey, jwtSecret, "attacker.example"} {
+		if strings.Contains(log, v) {
+			t.Fatalf("the audit log holds a value:\n%s", log)
+		}
+	}
+}
+
+// TestAHumanMayRemoveAndReplace is the other side of case 5b.
+func TestAHumanMayRemoveAndReplace(t *testing.T) {
+	root := project(t)
+	human := []string{"SECRETVEIL_CALLER=human"}
+	next := filepath.Join(t.TempDir(), "value")
+	write(t, next, "fake-rotated-Vb8Nq3Xs6Kd1")
+
+	if r := sv(t, root, human, "set", "api_key", "--from-file", next); r.code != 0 {
+		t.Fatalf("a human could not replace a value:\n%s", r.all())
+	}
+	if r := sv(t, root, human, "get", "--reveal", "api_key"); r.stdout != "fake-rotated-Vb8Nq3Xs6Kd1" {
+		t.Fatalf("the replace did not take:\n%s", r.all())
+	}
+	if r := sv(t, root, human, "rm", "-y", "jwt_secret"); r.code != 0 {
+		t.Fatalf("a human could not remove a value:\n%s", r.all())
+	}
+	log := read(t, filepath.Join(root, ".secretveil", "audit.log"))
+	if !strings.Contains(log, `"detail":"replaced"`) {
+		t.Errorf("the replace is not in the audit log:\n%s", log)
+	}
+}
+
+// The first set of a new project makes the .secretveil directory. The audit
+// record of that write must not be lost because the directory did not exist
+// when the command started.
+func TestTheFirstSetIsInTheAuditLog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	value := filepath.Join(t.TempDir(), "value")
+	write(t, value, "fake-first-Hs5Tq9Wm2Lc7")
+
+	if r := sv(t, root, nil, "set", "first_key", "--from-file", value); r.code != 0 {
+		t.Fatalf("the first set failed:\n%s", r.all())
+	}
+	log := read(t, filepath.Join(root, ".secretveil", "audit.log"))
+	if !strings.Contains(log, `"detail":"added"`) {
+		t.Errorf("the first set is not in the audit log:\n%s", log)
+	}
+	if strings.Contains(log, "fake-first-Hs5Tq9Wm2Lc7") {
+		t.Errorf("the audit log holds the value:\n%s", log)
+	}
+}
+
 // Case 6. The other honest one.
 //
 // A program that gets a real value can write that value to a file, and then

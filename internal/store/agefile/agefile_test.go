@@ -220,6 +220,27 @@ func TestNoKeyGivesAClearMessage(t *testing.T) {
 	}
 }
 
+// TestCreateNeverReplacesAValue guards the write that an agent may make. A
+// new reference gets its value, and a reference that has one keeps it.
+func TestCreateNeverReplacesAValue(t *testing.T) {
+	ctx := context.Background()
+	s, _, _ := newTestStore(t)
+	if err := s.Create(ctx, "db_password", "first"); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Create(ctx, "db_password", "second")
+	if !errors.Is(err, store.ErrExists) {
+		t.Fatalf("a second Create gave %v, want store.ErrExists", err)
+	}
+	s.Reload()
+	if v, _ := s.Get(ctx, "db_password"); v != "first" {
+		t.Fatalf("Create replaced the value: got %q", v)
+	}
+	if err := s.Create(ctx, "BAD REF", "x"); err == nil {
+		t.Fatal("Create accepted a bad reference")
+	}
+}
+
 func TestSetManyWritesOnce(t *testing.T) {
 	ctx := context.Background()
 	s, _, path := newTestStore(t)

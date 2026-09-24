@@ -108,3 +108,53 @@ func TestFileTag(t *testing.T) {
 		}
 	}
 }
+
+// TestASecondInitNeverReplacesAStoredValue covers the second route to issue
+// 56. The store already holds db_pass. A new file with a different DB_PASS
+// must get a new name, and the stored value must stay, because every handle
+// that names db_pass would otherwise give the new value.
+func TestASecondInitNeverReplacesAStoredValue(t *testing.T) {
+	root := project(t, map[string]string{
+		".env.local": "DB_PASS=fake-second-Hq7Wd2Kx9Lp4\n",
+	})
+	st := newFakeStore()
+	st.values["db_pass"] = "fake-first-Tz3Nc8Rv5Mb1"
+
+	res, err := Apply(context.Background(), st, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.values["db_pass"] != "fake-first-Tz3Nc8Rv5Mb1" {
+		t.Fatalf("init replaced the stored value of db_pass: %v", st.values)
+	}
+	if st.values["env_local_db_pass"] != "fake-second-Hq7Wd2Kx9Lp4" {
+		t.Fatalf("the new value is not under a new name: %v", st.values)
+	}
+	if len(res.Renamed) != 1 || res.Renamed[0].To != "env_local_db_pass" {
+		t.Fatalf("want one rename to env_local_db_pass, got %v", res.Renamed)
+	}
+	if got := read(t, filepath.Join(root, ".env.local")); !strings.Contains(got, "sv://env_local_db_pass") {
+		t.Fatalf(".env.local holds the wrong handle:\n%s", got)
+	}
+}
+
+// TestASecondInitKeepsTheNameOfTheSameValue keeps a second init quiet when
+// nothing changed. The same value under the same name is one secret, not two.
+func TestASecondInitKeepsTheNameOfTheSameValue(t *testing.T) {
+	root := project(t, map[string]string{
+		".env.local": "DB_PASS=fake-same-Gy6Bf4Js2Wn8\n",
+	})
+	st := newFakeStore()
+	st.values["db_pass"] = "fake-same-Gy6Bf4Js2Wn8"
+
+	res, err := Apply(context.Background(), st, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Renamed) != 0 {
+		t.Fatalf("the same value got a new name: %v", res.Renamed)
+	}
+	if got := read(t, filepath.Join(root, ".env.local")); !strings.Contains(got, "sv://db_pass") {
+		t.Fatalf(".env.local holds the wrong handle:\n%s", got)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +38,17 @@ func (f *fakeStore) Get(_ context.Context, ref string) (string, error) {
 		return v + "x", nil
 	}
 	return v, nil
+}
+
+func (f *fakeStore) List(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.values))
+	for k := range f.values {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (f *fakeStore) SetMany(_ context.Context, values map[string]string) error {
