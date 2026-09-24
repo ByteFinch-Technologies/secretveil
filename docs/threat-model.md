@@ -65,6 +65,21 @@ But the rules see only the name of the program and its flags. `npm run build` is
 and the script behind that name can hold `printenv`. This is case 3. The command runs, and
 the only thing between the agent and the value is the output filter.
 
+A program that starts another program does not hide it. `nice sh -c printenv`,
+`timeout 5 sh -c ...`, `xargs sh -c ...` and `find . -exec sh -c ...` are refused, because
+the rules check the program that the wrapper starts as well. The same goes for a runner
+that starts a program for a project: `uv run`, `poetry run`, `bundle exec`, `direnv exec`,
+`mise exec`, `cross-env`, `dotenv`, `parallel`, `tmux` and `screen`. The rules also refuse the
+programs that run shell text or program text from an argument: `awk`, `jq`, `script`,
+`watch`, `sudo`, `su`, `git -c`, `npx -c` and `npm exec -c`.
+
+A wrapper can only show a program that the rules know by name. `nice ./mytool` starts a
+program nobody listed, and the rules let it through. A two-step attack also gets past them.
+The agent writes `git config alias.x '!printenv'` into the repository, and then runs
+`git x`. Neither command has a refused name or flag. An editor is the same kind of gap:
+`vim -c '!printenv'` runs a shell command from an argument, and the rules do not read the
+flags of an editor.
+
 The rules exist for one narrow reason: `bash -c printenv` is the cheapest attack and the
 easiest to block. Do not read them as a sandbox. They are not one.
 

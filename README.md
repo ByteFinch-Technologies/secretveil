@@ -79,8 +79,9 @@ limits is worse than no tool, because you plan around a protection that is not t
    cannot be quietly lost in a later change.
 
 2. **The command rules read a name, not a program.** An agent may not run `bash -c printenv` or
-   `node -e '...'`. It may run `npm run build`, and that script can hold `printenv`. The rules
-   block the cheapest attack. They are not a sandbox.
+   `node -e '...'`, and a wrapper such as `nice` or `timeout` in front does not hide the shell.
+   It may run `npm run build`, and that script can hold `printenv`. The rules block the
+   cheapest attack. They are not a sandbox.
 
 3. **Installing this does not rotate anything.** If your `.env` already went into a git history,
    a CI log, or an agent transcript, those values are compromised now. **Rotate first, install
