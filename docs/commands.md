@@ -112,6 +112,11 @@ Give `--env-file` once for each file, in load order. A later file wins over an e
 secretveil run --env-file .env --env-file .env.development -- npm run dev
 ```
 
+A variable that the environment of `run` already holds wins over the same name in a file, and
+`run` says so. There is one exception: a value that holds a handle, such as the `sv://api_key`
+that direnv loads from `.env`. That text is not a value, so the file wins and `run` replaces
+the handle.
+
 The exit code of `run` is the exit code of the program, so it works in a pipeline and in a
 `Makefile` exactly as the program did.
 

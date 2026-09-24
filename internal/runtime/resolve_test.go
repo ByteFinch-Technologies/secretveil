@@ -105,6 +105,42 @@ func TestTheParentEnvironmentWins(t *testing.T) {
 	}
 }
 
+// TestAHandleInTheParentDoesNotWin guards direnv and every other loader that
+// puts the lines of .env in the environment before run starts. The parent then
+// holds the handle text, which is not a value, and the file must win.
+func TestAHandleInTheParentDoesNotWin(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "API_KEY=sv://api_key\nPORT=3000\n")
+	st := memStore(t, map[string]string{"api_key": "from-the-store"})
+
+	res, err := Resolve(context.Background(), st, Options{
+		Dir:    dir,
+		Parent: []string{"API_KEY=sv://api_key", "PORT=4000"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := value(res.Env, "API_KEY"); got != "from-the-store" {
+		t.Fatalf("API_KEY is %q, want the value from the store", got)
+	}
+	// A real value in the parent still wins.
+	if got, _ := value(res.Env, "PORT"); got != "4000" {
+		t.Fatalf("PORT is %q, want the value from the shell", got)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0] != "PORT" {
+		t.Fatalf("the skipped list is %v", res.Skipped)
+	}
+	n := 0
+	for _, e := range res.Env {
+		if strings.HasPrefix(e, "API_KEY=") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("the child has %d entries for API_KEY: %v", n, res.Env)
+	}
+}
+
 func TestTheLocalFileWinsOverTheMainFile(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, ".env", "API_KEY=sv://api_key\nPORT=3000\n")
