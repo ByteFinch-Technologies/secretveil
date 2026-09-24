@@ -485,6 +485,58 @@ func TestAnAgentCannotCallItselfAHuman(t *testing.T) {
 	}
 }
 
+// TestAnAgentCannotTurnThePolicyOff covers issue 54. The policy file sits in
+// the project, where an agent writes. One write of enforce = false gave an
+// agent a shell, with no line on the screen and no record in the log.
+func TestAnAgentCannotTurnThePolicyOff(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this case needs a posix shell")
+	}
+	root := project(t)
+	pol := filepath.Join(root, ".secretveil", "policy.toml")
+	shell := []string{"run", "-q", "--", "sh", "-c", "echo $API_KEY | rev"}
+
+	for _, body := range []string{"[agent]\nenforce = false\n", "[agent]\ndeny = []\n"} {
+		write(t, pol, body)
+		r := sv(t, root, nil, shell...)
+		if r.code == 0 {
+			t.Fatalf("the file %q gave an agent a shell:\n%s", body, r.all())
+		}
+		if !strings.Contains(r.stderr, "policy approve") {
+			t.Fatalf("the refusal does not say why the file did not apply:\n%s", r.all())
+		}
+		if strings.Contains(r.all(), reverse(apiKey)) {
+			t.Fatalf("the reversed value reached the output:\n%s", r.all())
+		}
+	}
+
+	r := sv(t, root, nil, "policy", "approve")
+	if r.code == 0 {
+		t.Fatalf("an agent approved its own policy file:\n%s", r.all())
+	}
+
+	r = sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "policy", "approve")
+	if r.code != 0 {
+		t.Fatalf("a human could not approve the file:\n%s", r.all())
+	}
+	r = sv(t, root, nil, "run", "-q", "--", "sh", "-c", "echo approved")
+	if r.code != 0 || !strings.Contains(r.stdout, "approved") {
+		t.Fatalf("an approved file did not apply:\n%s", r.all())
+	}
+
+	// An agent that edits an approved file cancels the approval.
+	write(t, pol, "[agent]\ndeny = []\nallow = []\n")
+	r = sv(t, root, nil, shell...)
+	if r.code == 0 {
+		t.Fatalf("an edit of an approved file kept the approval:\n%s", r.all())
+	}
+
+	log := read(t, filepath.Join(root, ".secretveil", "audit.log"))
+	if !strings.Contains(log, `"event":"policy"`) || !strings.Contains(log, "no human approved") {
+		t.Fatalf("the audit log does not record the approval and the refusal:\n%s", log)
+	}
+}
+
 func reverse(s string) string {
 	b := []byte(s)
 	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {

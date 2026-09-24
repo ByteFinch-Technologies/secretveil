@@ -47,6 +47,8 @@ const (
 	EventWrite Event = "write"
 	// EventDelete is a value that left the store.
 	EventDelete Event = "delete"
+	// EventPolicy is a policy file that a human approved.
+	EventPolicy Event = "policy"
 )
 
 // Record is one line in the log.

@@ -297,6 +297,7 @@ equivalent for other runners.
 | `list` | Print the name of every secret in the store. |
 | `get <ref>` | Print one plaintext value. Needs `--reveal` and a human caller. |
 | `rm <ref>` | Remove one secret from the store. |
+| `policy approve` | Let a policy file that turns off a default rule apply to an agent. Needs a human caller. |
 | `version` | Print the version. |
 | `completion <shell>` | Print the autocompletion script for bash, zsh, fish or PowerShell. |
 
@@ -347,6 +348,8 @@ power.
 Set `SECRETVEIL_CALLER=human` when that is wrong. The marker of an AI tool wins over this
 variable, so an agent cannot use it to call itself a human. Edit `.secretveil/policy.toml` to change what an
 agent may run, or set `enforce = false` to turn the command rules off and keep the output filter.
+An agent can write that file too, so a change that turns off a default rule applies to an agent
+only after you run `secretveil policy approve`. A change to the file cancels the approval.
 
 ## Related tools
 

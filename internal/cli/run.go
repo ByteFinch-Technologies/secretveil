@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +12,6 @@ import (
 	"github.com/ByteFinch-Technologies/secretveil/internal/audit"
 	"github.com/ByteFinch-Technologies/secretveil/internal/detect"
 	"github.com/ByteFinch-Technologies/secretveil/internal/migrate"
-	"github.com/ByteFinch-Technologies/secretveil/internal/policy"
 	"github.com/ByteFinch-Technologies/secretveil/internal/project"
 	"github.com/ByteFinch-Technologies/secretveil/internal/runtime"
 	"github.com/spf13/cobra"
@@ -72,32 +70,27 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 			log := audit.New(root)
 			who := detect.Detect()
 
+			st, file := openStore(root)
+
 			// The policy applies to an agent only. A human at a terminal keeps
 			// every power their shell gives them, and a build pipeline runs
 			// whatever the pipeline file says.
 			if who.Caller == detect.Agent {
-				pol, perr := policy.Load(root)
+				refusal, detail, perr := agentCheck(root, file, args)
 				if perr != nil {
 					return perr
 				}
-				if refusal := pol.Check(args); refusal != nil {
-					rule := ""
-					var r *policy.Refusal
-					if errors.As(refusal, &r) {
-						rule = r.Rule
-					}
+				if refusal != nil {
 					_ = log.Write(audit.Record{
 						Event:   audit.EventRefused,
 						Caller:  who.Caller.String(),
 						Reason:  who.Reason,
 						Command: args,
-						Detail:  rule,
+						Detail:  detail,
 					})
 					return refusal
 				}
 			}
-
-			st, _ := openStore(root)
 
 			res, err := runtime.Resolve(cmd.Context(), st, runtime.Options{
 				Dir:   start,

@@ -36,6 +36,7 @@ values reach the program through "secretveil run".`,
 		newList(),
 		newRemove(),
 		newDoctor(),
+		newPolicy(),
 	)
 	return root
 }

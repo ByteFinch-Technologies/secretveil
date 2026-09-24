@@ -18,10 +18,13 @@
 package policy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -99,15 +102,33 @@ func Default() *Policy {
 // Load reads the policy for a project. A project with no policy file gets the
 // default rules.
 func Load(root string) (*Policy, error) {
+	p, _, err := LoadWithHash(root)
+	return p, err
+}
+
+// LoadWithHash is Load, and it also returns the SHA-256 of the bytes it read,
+// as hex. The hash is empty when the project has no policy file.
+//
+// The rules and the hash come from one read. With two reads, the file could
+// change between them, and an approval of one file would pass another.
+func LoadWithHash(root string) (*Policy, string, error) {
 	path := filepath.Join(root, ".secretveil", FileName)
 	body, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Default(), nil
+		return Default(), "", nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	sum := sha256.Sum256(body)
+	p, err := decode(path, body)
+	if err != nil {
+		return nil, "", err
+	}
+	return p, hex.EncodeToString(sum[:]), nil
+}
 
+func decode(path string, body []byte) (*Policy, error) {
 	// The default is the base, so a file that names only one rule keeps the
 	// rest. A file that empties a list on purpose can still do so, because an
 	// empty list in the file replaces the default list.
@@ -120,6 +141,102 @@ func Load(root string) (*Policy, error) {
 		return nil, fmt.Errorf("the policy file %s holds a setting nobody knows: %s", path, key.String())
 	}
 	return p, nil
+}
+
+// ApprovalKey names the setting in the encrypted store that holds the hash of
+// the policy file a human approved.
+const ApprovalKey = "policy_sha256"
+
+// Weaker returns one reason for each place where p gives an agent more than
+// the defaults do. A policy that only adds rules gives no reason.
+//
+// The policy file sits inside the project, and an agent writes files in the
+// project all day. So a file that turns a default rule off may be the work of
+// the agent it is meant to stop. The caller uses the reasons to decide whether
+// the file needs the approval of a human.
+func Weaker(p *Policy) []string {
+	d := Default()
+	var out []string
+	if !p.Agent.Enforce {
+		out = append(out, "enforce is false")
+	}
+	// Check compares the name after programName, so cmd.exe and cmd are one
+	// rule. The comparison here does the same.
+	denied := map[string]bool{}
+	for _, name := range p.Agent.Deny {
+		denied[programName(name)] = true
+	}
+	seen := map[string]bool{}
+	for _, name := range d.Agent.Deny {
+		name = programName(name)
+		if !denied[name] && !seen[name] {
+			seen[name] = true
+			out = append(out, fmt.Sprintf("the deny list does not hold %s", name))
+		}
+	}
+
+	progs := make([]string, 0, len(d.Agent.InlineCode))
+	for prog := range d.Agent.InlineCode {
+		progs = append(progs, prog)
+	}
+	sort.Strings(progs)
+	for _, prog := range progs {
+		want := d.Agent.InlineCode[prog]
+		got, ok := p.Agent.InlineCode[prog]
+		switch {
+		case !ok:
+			out = append(out, fmt.Sprintf("inline_code has no rule for %s", prog))
+		case len(want) == 0 && len(got) > 0:
+			// An empty list refuses every use. A list of flags refuses
+			// fewer.
+			out = append(out, fmt.Sprintf("%s is no longer refused for every use", prog))
+		default:
+			for _, flag := range want {
+				if !contains(got, flag) {
+					out = append(out, fmt.Sprintf("inline_code for %s does not hold %s", prog, flag))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// Floor returns p with every default rule put back. The allow list of p stays,
+// because an allow list only takes power away.
+//
+// This is the policy an agent gets when the file is weaker than the defaults
+// and no human approved it. A file that only adds rules keeps all of them.
+func Floor(p *Policy) *Policy {
+	d := Default()
+	out := &Policy{Agent: Agent{
+		Enforce:    true,
+		Allow:      append([]string(nil), p.Agent.Allow...),
+		Deny:       append([]string(nil), p.Agent.Deny...),
+		InlineCode: map[string][]string{},
+	}}
+	for _, name := range d.Agent.Deny {
+		if !contains(out.Agent.Deny, name) {
+			out.Agent.Deny = append(out.Agent.Deny, name)
+		}
+	}
+	for prog, flags := range p.Agent.InlineCode {
+		out.Agent.InlineCode[prog] = append([]string(nil), flags...)
+	}
+	for prog, want := range d.Agent.InlineCode {
+		got, ok := out.Agent.InlineCode[prog]
+		switch {
+		case !ok || len(want) == 0:
+			out.Agent.InlineCode[prog] = append([]string(nil), want...)
+		default:
+			for _, flag := range want {
+				if !contains(got, flag) {
+					got = append(got, flag)
+				}
+			}
+			out.Agent.InlineCode[prog] = got
+		}
+	}
+	return out
 }
 
 // Refusal explains why a command was refused.

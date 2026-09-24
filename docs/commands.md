@@ -232,6 +232,29 @@ value behind it is exactly what `doctor` reports.
 
 ---
 
+## policy approve
+
+```sh
+secretveil policy approve
+```
+
+Records that a human wrote `.secretveil/policy.toml`. Needs a human caller.
+
+The policy file sits inside the project, and an agent writes files there all day. So a file
+that turns off a default rule does not apply to an agent until a human approves it. Examples:
+`enforce = false`, a deny list without `sh`, or an `inline_code` rule without `-e` for `node`.
+Until then, an agent gets the default rules as well as the rules in the file. A file that only
+adds rules needs no approval.
+
+`approve` stores the SHA-256 of the file inside the encrypted store and writes a `policy`
+record to the audit log. A change to the file cancels the approval, so run it again after each
+change. `doctor` says whether the file needs an approval.
+
+When the file allows a command and the default rules refuse it, the refusal names the missing
+approval, so you can see why the file did not apply.
+
+---
+
 ## completion
 
 ```sh
