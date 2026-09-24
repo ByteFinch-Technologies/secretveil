@@ -165,7 +165,7 @@ func runChecks(ctx context.Context, root string) []finding {
 	add(checkLinks(root, plan))
 	add(checkIgnore(root))
 	add(checkBackup(root))
-	add(checkPolicy(root))
+	add(checkPolicy(root, file))
 	return found
 }
 
@@ -540,21 +540,38 @@ func checkBackup(root string) finding {
 	}}
 }
 
-func checkPolicy(root string) finding {
+func checkPolicy(root string, file *agefile.Store) finding {
 	path := filepath.Join(root, project.Dir, policy.FileName)
 	if _, err := os.Stat(path); err != nil {
 		return finding{levelNote, "this project has no policy file, so the default rules apply", nil}
 	}
-	p, err := policy.Load(root)
+	written, inForce, reasons, err := agentPolicy(root, file)
 	if err != nil {
 		return finding{levelBad, "the policy file did not load", []string{
 			err.Error(),
 			"Every command that an agent runs fails until this is fixed.",
 		}}
 	}
-	if !p.Agent.Enforce {
+	if len(reasons) > 0 {
+		detail := []string{"An agent gets the default rules as well, so these settings do not apply to it:"}
+		for i, r := range reasons {
+			if i == 5 {
+				detail = append(detail, fmt.Sprintf("  and %d more", len(reasons)-i))
+				break
+			}
+			detail = append(detail, "  "+r)
+		}
+		detail = append(detail, "If a person wrote this file, that person can run \"secretveil policy approve\".")
+		return finding{levelWarn, "the policy file turns off a default rule, and no human approved it", detail}
+	}
+	if !inForce.Agent.Enforce {
 		return finding{levelWarn, "the command rules are turned off in the policy file", []string{
-			"An agent may start a shell here. The output filter still runs.",
+			"A human approved this file. An agent may start a shell here. The output filter still runs.",
+		}}
+	}
+	if len(policy.Weaker(written)) > 0 {
+		return finding{levelNote, "a human approved a policy file that turns off a default rule", []string{
+			summary(policy.Weaker(written)),
 		}}
 	}
 	return finding{levelOK, "the policy file loads and the command rules are on", nil}

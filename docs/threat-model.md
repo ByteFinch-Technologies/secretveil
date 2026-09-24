@@ -68,6 +68,13 @@ the only thing between the agent and the value is the output filter.
 The rules exist for one narrow reason: `bash -c printenv` is the cheapest attack and the
 easiest to block. Do not read them as a sandbox. They are not one.
 
+The rules live in `.secretveil/policy.toml`, inside the project, where an agent can write. An
+earlier build read that file as it was, so one write of `enforce = false` gave an agent a
+shell. Now a file that turns off a default rule applies to an agent only after a human runs
+`secretveil policy approve`. That command stores the hash of the file in the encrypted store,
+which an agent cannot write without the key. Until then, the default rules apply as well as the
+file. An agent that edits an approved file cancels the approval.
+
 ### 2.3 The output filter has a floor
 
 The filter removes every secret value from the output of the child process, in either

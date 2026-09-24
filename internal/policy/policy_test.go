@@ -263,3 +263,120 @@ func writePolicy(t *testing.T, body string) string {
 	}
 	return root
 }
+
+// TestWeakerNamesWhatAFileTurnsOff covers issue 54. The file sits where an
+// agent can write, so a file that turns a default rule off must be seen.
+func TestWeakerNamesWhatAFileTurnsOff(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string // a piece of one reason, or "" for no reason at all
+	}{
+		{"the sample file keeps every rule", Sample, ""},
+		{"a file that only adds rules is not weaker", "[agent]\ndeny = [" + quoted(Default().Agent.Deny) + ", \"curl\"]\nallow = [\"npm\"]\n", ""},
+		{"enforce false", "[agent]\nenforce = false\n", "enforce is false"},
+		{"an empty deny list", "[agent]\ndeny = []\n", "the deny list does not hold sh"},
+		{"one deny name gone", "[agent]\ndeny = [\"bash\"]\n", "the deny list does not hold zsh"},
+		{"an inline flag gone", "[agent.inline_code]\nnode = [\"-e\"]\n", "inline_code for node does not hold --eval"},
+		{"ssh allowed with flags", "[agent.inline_code]\nssh = [\"-o\"]\n", "ssh is no longer refused for every use"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := Load(writePolicy(t, c.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := Weaker(p)
+			if c.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no reason, got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(strings.Join(got, "\n"), c.want) {
+				t.Fatalf("the reasons %q do not hold %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestAPathInThePolicyNamesTheProgram covers the review of PR 64. A deny list
+// of paths looked complete to Weaker and matched nothing in Check, so an agent
+// could turn every rule off with no approval.
+func TestAPathInThePolicyNamesTheProgram(t *testing.T) {
+	var deny []string
+	for _, name := range Default().Agent.Deny {
+		deny = append(deny, "/bin/"+name)
+	}
+	body := "[agent]\nenforce = true\ndeny = [" + quoted(deny) + "]\nallow = [\"/usr/bin/npm\", \"sh\", \"node\"]\n" +
+		"[agent.inline_code]\nnode = [\"-e\"]\n\"/usr/local/bin/node\" = []\n"
+	p, err := Load(writePolicy(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"sh", "-c", "x"}, {"printenv"}, {"/usr/bin/printenv"}, {"node", "app.js"}} {
+		if p.Check(args) == nil {
+			t.Errorf("a policy that names the program by its path allowed %q", args)
+		}
+	}
+	if err := p.Check([]string{"npm", "test"}); err != nil {
+		t.Errorf("an allow entry written as a path did not allow npm: %v", err)
+	}
+	if got := p.Agent.InlineCode["node"]; len(got) != 0 {
+		t.Errorf("two keys for node did not join into the stricter rule, got %q", got)
+	}
+	if _, ok := p.Agent.InlineCode["/usr/local/bin/node"]; ok {
+		t.Error("the key written as a path was kept")
+	}
+}
+
+// TestTheFloorPutsEveryDefaultRuleBack is the rule set an agent gets from a
+// file that no human approved.
+func TestTheFloorPutsEveryDefaultRuleBack(t *testing.T) {
+	p, err := Load(writePolicy(t, "[agent]\nenforce = false\ndeny = [\"curl\"]\nallow = [\"npm\", \"sh\"]\n[agent.inline_code]\nssh = [\"-o\"]\nnode = []\ngo = [\"run\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := Floor(p)
+	if reasons := Weaker(f); len(reasons) != 0 {
+		t.Fatalf("the floor is still weaker than the defaults: %q", reasons)
+	}
+	for _, args := range [][]string{{"sh", "-c", "x"}, {"curl", "x"}, {"ssh", "host"}, {"node", "app.js"}, {"go", "run", "."}} {
+		if f.Check(args) == nil {
+			t.Errorf("the floor allowed %q", args)
+		}
+	}
+	if f.Check([]string{"npm", "test"}) != nil {
+		t.Error("the floor refused a program that the allow list names")
+	}
+	if p.Check([]string{"sh", "-c", "x"}) != nil {
+		t.Error("Floor changed the policy it was given")
+	}
+}
+
+func TestLoadWithHash(t *testing.T) {
+	root := writePolicy(t, "[agent]\nenforce = true\n")
+	_, a, err := LoadWithHash(root)
+	if err != nil || len(a) != 64 {
+		t.Fatalf("got hash %q err %v", a, err)
+	}
+	_, b, _ := LoadWithHash(root)
+	if a != b {
+		t.Fatal("the same file gave two hashes")
+	}
+	root2 := writePolicy(t, "[agent]\nenforce = true \n")
+	if _, c, _ := LoadWithHash(root2); c == a {
+		t.Fatal("two different files gave one hash")
+	}
+	if _, d, err := LoadWithHash(t.TempDir()); err != nil || d != "" {
+		t.Fatalf("no file must give no hash, got %q err %v", d, err)
+	}
+}
+
+func quoted(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = `"` + n + `"`
+	}
+	return strings.Join(out, ", ")
+}

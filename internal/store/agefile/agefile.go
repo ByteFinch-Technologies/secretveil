@@ -53,6 +53,10 @@ var scryptWorkFactor = 0
 type payload struct {
 	Version int               `json:"version"`
 	Secrets map[string]string `json:"secrets"`
+	// Meta holds a setting that only a human may change, such as the hash of
+	// an approved policy file. It lives in the encrypted file, so an agent
+	// cannot write it without the key.
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 // source is one way to open the file.
@@ -71,6 +75,7 @@ type Store struct {
 	mu     sync.Mutex
 	loaded bool
 	values map[string]string
+	meta   map[string]string
 	// used is the source that opened the file. A write uses the same source,
 	// so a read and a write never disagree about the key.
 	used *source
@@ -175,6 +180,7 @@ func (s *Store) load() error {
 		return nil
 	}
 	s.values = map[string]string{}
+	s.meta = map[string]string{}
 
 	raw, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -220,6 +226,9 @@ func (s *Store) load() error {
 		if p.Secrets != nil {
 			s.values = p.Secrets
 		}
+		if p.Meta != nil {
+			s.meta = p.Meta
+		}
 		s.used = src
 		s.loaded = true
 		return nil
@@ -240,7 +249,7 @@ func (s *Store) save() error {
 		s.used = src
 	}
 
-	plain, err := json.Marshal(payload{Version: 1, Secrets: s.values})
+	plain, err := json.Marshal(payload{Version: 1, Secrets: s.values, Meta: s.meta})
 	if err != nil {
 		return err
 	}
@@ -349,6 +358,7 @@ func (s *Store) withWriteLock(createDir bool, fn func() error) error {
 
 	s.loaded = false
 	s.values = nil
+	s.meta = nil
 	s.used = nil
 	return fn()
 }
@@ -403,6 +413,35 @@ func (s *Store) SetMany(_ context.Context, values map[string]string) error {
 	})
 }
 
+// Meta returns a setting from the encrypted file, or an empty string when the
+// file holds no such setting.
+func (s *Store) Meta(key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.load(); err != nil {
+		return "", err
+	}
+	return s.meta[key], nil
+}
+
+// SetMeta writes a setting into the encrypted file. An empty value removes the
+// setting.
+func (s *Store) SetMeta(key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.withWriteLock(true, func() error {
+		if err := s.load(); err != nil {
+			return err
+		}
+		if value == "" {
+			delete(s.meta, key)
+		} else {
+			s.meta[key] = value
+		}
+		return s.save()
+	})
+}
+
 func (s *Store) List(_ context.Context) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -438,6 +477,7 @@ func (s *Store) Reload() {
 	defer s.mu.Unlock()
 	s.loaded = false
 	s.values = nil
+	s.meta = nil
 	s.used = nil
 }
 

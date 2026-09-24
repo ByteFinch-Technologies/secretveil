@@ -465,3 +465,37 @@ func TestRestoreNilSnapshotMakesNoDirectory(t *testing.T) {
 		t.Fatalf("the restore made %s, and it must not", dir)
 	}
 }
+
+// TestMetaSurvivesAWriteAndARestart covers the approval of issue 54. The hash
+// of an approved policy lives next to the secrets, and a later write of a
+// secret must not drop it.
+func TestMetaSurvivesAWriteAndARestart(t *testing.T) {
+	ctx := context.Background()
+	s, ring, path := newTestStore(t)
+	if err := s.Set(ctx, "db_password", "tr0ub4dor"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMeta("policy_sha256", "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set(ctx, "api_key", "x9"); err != nil {
+		t.Fatal(err)
+	}
+
+	again := New(path, ring, "test.identity")
+	if got, err := again.Meta("policy_sha256"); err != nil || got != "abc" {
+		t.Fatalf("want abc, got %q err %v", got, err)
+	}
+	if got, _ := again.Get(ctx, "db_password"); got != "tr0ub4dor" {
+		t.Fatalf("a secret was lost: %q", got)
+	}
+	if refs, _ := again.List(ctx); len(refs) != 2 {
+		t.Fatalf("the meta setting must not show as a secret: %q", refs)
+	}
+	if err := again.SetMeta("policy_sha256", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := New(path, ring, "test.identity").Meta("policy_sha256"); got != "" {
+		t.Fatalf("an empty value must remove the setting, got %q", got)
+	}
+}
