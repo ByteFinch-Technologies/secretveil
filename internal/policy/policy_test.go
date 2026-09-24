@@ -273,7 +273,7 @@ func TestWeakerNamesWhatAFileTurnsOff(t *testing.T) {
 		want string // a piece of one reason, or "" for no reason at all
 	}{
 		{"the sample file keeps every rule", Sample, ""},
-		{"a file that only adds rules is not weaker", "[agent]\ndeny = [\"sh\", \"bash\", \"zsh\", \"dash\", \"fish\", \"ksh\", \"csh\", \"tcsh\", \"ash\", \"busybox\", \"pwsh\", \"powershell\", \"cmd\", \"env\", \"printenv\", \"set\", \"export\", \"declare\", \"printf\", \"curl\"]\nallow = [\"npm\"]\n", ""},
+		{"a file that only adds rules is not weaker", "[agent]\ndeny = [" + quoted(Default().Agent.Deny) + ", \"curl\"]\nallow = [\"npm\"]\n", ""},
 		{"enforce false", "[agent]\nenforce = false\n", "enforce is false"},
 		{"an empty deny list", "[agent]\ndeny = []\n", "the deny list does not hold sh"},
 		{"one deny name gone", "[agent]\ndeny = [\"bash\"]\n", "the deny list does not hold zsh"},
@@ -341,4 +341,12 @@ func TestLoadWithHash(t *testing.T) {
 	if _, d, err := LoadWithHash(t.TempDir()); err != nil || d != "" {
 		t.Fatalf("no file must give no hash, got %q err %v", d, err)
 	}
+}
+
+func quoted(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = `"` + n + `"`
+	}
+	return strings.Join(out, ", ")
 }
