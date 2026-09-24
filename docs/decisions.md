@@ -270,12 +270,15 @@ nothing anywhere would say a line was dropped.
 **Decision.** `drainPTY` waits for the copy to reach the end of the stream, then closes. A
 read of the pseudo terminal reports the end as soon as the last program closes the other end,
 so the normal wait is microseconds. A child that leaves a program behind holding that end
-open would never report the end, so the wait is bounded by `ptyDrainGrace`, two seconds, and
+open would never report the end, so the wait is bounded by `drainGrace`, two seconds, and
 the close then ends the blocked read.
 
-**The other path was already right.** `runPipes` hands `cmd.Stdout` an `io.Writer` and not a
-file, so `os/exec` makes the pipe and its own copy, and `cmd.Wait` waits for that copy. Only
-the pseudo terminal path owned the copy, and only it had to own the order.
+**The other path had the order right and no bound.** `runPipes` hands `cmd.Stdout` an
+`io.Writer` and not a file, so `os/exec` makes the pipe and its own copy, and `cmd.Wait` waits
+for that copy. That wait had no limit. A child that started a server in the background and
+exited left `run` open for as long as the server ran (issue #59). `runPipes` now sets
+`cmd.WaitDelay` to the same `drainGrace`. `cmd.Wait` then returns `exec.ErrWaitDelay` when the
+child succeeded and the pipes had to be closed, and `runPipes` reads that as a success.
 
 **Guard.** `TestAPseudoTerminalKeepsTheLastLine` runs a child that writes 500 lines and stops.
 Every line has to arrive. Note that this test passes on macOS with the old order as well, so

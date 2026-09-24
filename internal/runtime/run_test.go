@@ -387,6 +387,56 @@ func TestAPseudoTerminalRunGetsTheEndOfAPipedInput(t *testing.T) {
 	}
 }
 
+// TestAProgramLeftInTheBackgroundDoesNotHoldTheRun guards the pipe path. A
+// child that starts a program in the background and exits leaves that program
+// with the output pipes. The run must end a short time after the child, and
+// must keep the exit code of the child.
+func TestAProgramLeftInTheBackgroundDoesNotHoldTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		script string
+		code   int
+	}{
+		{`sleep 20 & echo "parent done"`, 0},
+		{`sleep 20 & echo "parent done"; exit 3`, 3},
+	} {
+		out := newSafeBuffer()
+		type outcome struct {
+			res *Result
+			err error
+		}
+		done := make(chan outcome, 1)
+		start := time.Now()
+		go func() {
+			res, err := Run(context.Background(), Config{
+				Args:   []string{"/bin/sh", "-c", tc.script},
+				Env:    os.Environ(),
+				Stdin:  strings.NewReader(""),
+				Stdout: out,
+				Stderr: newSafeBuffer(),
+				NoPTY:  true,
+			})
+			done <- outcome{res, err}
+		}()
+		select {
+		case o := <-done:
+			if o.err != nil {
+				t.Fatalf("%s: the runtime failed: %v", tc.script, o.err)
+			}
+			if o.res.ExitCode != tc.code {
+				t.Fatalf("%s: the exit code is %d, not %d", tc.script, o.res.ExitCode, tc.code)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: the run still waits for the program in the background", tc.script)
+		}
+		if took := time.Since(start); took > drainGrace+3*time.Second {
+			t.Fatalf("%s: the run took %v", tc.script, took)
+		}
+		if !strings.Contains(out.String(), "parent done") {
+			t.Fatalf("%s: the output is lost: %q", tc.script, out.String())
+		}
+	}
+}
+
 // itoa turns a small number into text without a dependency.
 func itoa(n int) string {
 	if n == 0 {

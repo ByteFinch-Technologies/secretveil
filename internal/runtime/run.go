@@ -122,6 +122,10 @@ func runPipes(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher
 	cmd.Stdin = stdin
 	cmd.Stdout = wOut
 	cmd.Stderr = wErr
+	// A program that the child left in the background can hold the output
+	// pipes open for as long as it runs. Without a limit, run did not return
+	// until that program ended, which for a server is never.
+	cmd.WaitDelay = drainGrace
 
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -132,6 +136,11 @@ func runPipes(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher
 	stopTimer := startIdleFlush(idle, wOut, wErr)
 
 	err := cmd.Wait()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The child exited with success and a program it left behind still
+		// held the pipes. The pipes are now closed, and the run succeeded.
+		err = nil
+	}
 	stopTimer()
 	stopSignals()
 
@@ -223,12 +232,14 @@ func runPTY(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher,
 	return res, closeErr
 }
 
-// ptyDrainGrace is how long the last bytes of a child have to arrive after the
-// child is gone. The copy normally ends in microseconds, because a read of the
-// pseudo terminal reports EIO as soon as the last program closes the other end.
-// The grace matters only when the child left a program behind that still holds
-// that end open, and then it is a bound on the wait and not a delay.
-const ptyDrainGrace = 2 * time.Second
+// drainGrace is how long the last bytes of a child have to arrive after the
+// child is gone. The copy normally ends in microseconds, because a read reports
+// the end of the stream as soon as the last program closes the other end. The
+// grace matters only when the child left a program behind that still holds
+// that end open, such as a server started in the background, and then it is a
+// bound on the wait and not a delay. Both the pipe path and the pseudo
+// terminal path use it.
+const drainGrace = 2 * time.Second
 
 // drainPTY lets the output copy finish, then closes the pseudo terminal.
 //
@@ -246,7 +257,7 @@ func drainPTY(ptmx *os.File, wg *sync.WaitGroup) {
 	select {
 	case <-done:
 		// The copy reached the end of the stream. Nothing is left to read.
-	case <-time.After(ptyDrainGrace):
+	case <-time.After(drainGrace):
 		// Something still holds the other end open. Close ours, which ends the
 		// blocked read, and take the bytes that did arrive.
 	}
