@@ -326,11 +326,18 @@ var wrappers = map[string][]string{
 	"ionice": nil, "taskset": nil, "chrt": nil, "caffeinate": nil,
 	"unbuffer": nil, "strace": nil, "ltrace": nil, "arch": nil,
 	"sandbox-exec": nil, "npx": nil, "bunx": nil, "pnpx": nil,
-	"find": {"-exec", "-execdir", "-ok", "-okdir"},
-	"fd":   {"-x", "--exec", "-X", "--exec-batch"},
-	"npm":  {"exec", "x"},
-	"pnpm": {"exec", "dlx"},
-	"yarn": {"exec", "dlx"},
+	"parallel": nil, "tmux": nil, "screen": nil, "hyperfine": nil,
+	"cross-env": nil, "dotenv": nil,
+	"find":   {"-exec", "-execdir", "-ok", "-okdir"},
+	"fd":     {"-x", "--exec", "-X", "--exec-batch"},
+	"npm":    {"exec", "x"},
+	"pnpm":   {"exec", "dlx"},
+	"yarn":   {"exec", "dlx"},
+	"direnv": {"exec"},
+	"mise":   {"exec", "x"},
+	"uv":     {"run"}, "poetry": {"run"}, "pipenv": {"run"}, "pdm": {"run"},
+	"conda": {"run"}, "pixi": {"run"}, "rye": {"run"},
+	"bundle": {"exec"},
 }
 
 // globalOptions names a program whose inline code flags are global options.
@@ -393,6 +400,12 @@ func (p *Policy) wrapped(name string, rest []string) []string {
 	for i, a := range rest {
 		if p.known(programName(a)) {
 			return rest[i:]
+		}
+		// tmux, screen and parallel also take the command as one string,
+		// "tmux new 'sh -c x'". The first word of that string is a program
+		// too, so the string is split and checked as a command.
+		if words := strings.Fields(a); len(words) > 1 && p.known(programName(words[0])) {
+			return append(words, rest[i+1:]...)
 		}
 	}
 	return nil

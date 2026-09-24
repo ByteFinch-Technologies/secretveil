@@ -208,6 +208,59 @@ func TestProgramsThatRunShellText(t *testing.T) {
 	}
 }
 
+// TestARunnerDoesNotHideTheProgram covers the tools that start a program for
+// a project: a task runner, an environment loader, a terminal multiplexer. Each
+// one takes the command as its own arguments, or as one string.
+func TestARunnerDoesNotHideTheProgram(t *testing.T) {
+	for _, args := range [][]string{
+		{"parallel", "printenv", ":::", "a"},
+		{"parallel", "printenv {}", ":::", "a"},
+		{"tmux", "new", "printenv"},
+		{"tmux", "new-session", "-d", "sh -c printenv"},
+		{"screen", "-dm", "printenv"},
+		{"hyperfine", "printenv"},
+		{"cross-env", "A=1", "printenv"},
+		{"dotenv", "--", "printenv"},
+		{"direnv", "exec", ".", "printenv"},
+		{"mise", "exec", "--", "printenv"},
+		{"mise", "x", "node@20", "--", "node", "-e", "1"},
+		{"uv", "run", "printenv"},
+		{"uv", "run", "python", "-c", "1"},
+		{"poetry", "run", "printenv"},
+		{"pipenv", "run", "printenv"},
+		{"pdm", "run", "printenv"},
+		{"conda", "run", "-n", "base", "printenv"},
+		{"pixi", "run", "printenv"},
+		{"rye", "run", "printenv"},
+		{"bundle", "exec", "printenv"},
+		{"bundle", "exec", "ruby", "-e", "1"},
+		{"nice", "tmux", "new", "sh -c printenv"},
+	} {
+		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%v was allowed, and the runner starts a program the rules refuse", args)
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"uv", "run", "pytest"},
+		{"uv", "pip", "install", "env"},
+		{"poetry", "install"},
+		{"bundle", "install"},
+		{"bundle", "exec", "rspec"},
+		{"direnv", "allow"},
+		{"mise", "install", "node"},
+		{"hyperfine", "npm test"},
+		{"tmux", "ls"},
+	} {
+		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
+			if !allowed(t, args...) {
+				t.Errorf("%v was refused, and it starts no program the rules refuse", args)
+			}
+		})
+	}
+}
+
 // TestGitConfigFromTheCommandLine covers "git -c alias.x=!cmd x", which runs a
 // shell. The -c is a global option, and after the subcommand the same letters
 // mean something else.
