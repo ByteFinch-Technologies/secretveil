@@ -336,6 +336,57 @@ func TestAPseudoTerminalRemovesAMultiLineValue(t *testing.T) {
 	}
 }
 
+// TestAPseudoTerminalRunGetsTheEndOfAPipedInput guards input from a pipe or a
+// file when the output is a terminal, as in "psql < dump.sql". The child must
+// read the input directly and get its end. A copy into the pseudo terminal
+// never sent the end, so the child waited forever.
+func TestAPseudoTerminalRunGetsTheEndOfAPipedInput(t *testing.T) {
+	out := newSafeBuffer()
+	cfg := Config{
+		Args:     []string{"/bin/sh", "-c", `cat; echo "input ended"; test -t 1 && echo TTY`},
+		Env:      os.Environ(),
+		Values:   map[string]string{"api_key": testSecret},
+		Stdin:    strings.NewReader("one line of input\n"),
+		Stdout:   out,
+		Stderr:   newSafeBuffer(),
+		ForcePTY: true,
+	}
+	// Run does not stop a child that waits, so the limit is here. Without
+	// it, the fault hangs the whole test run instead of failing this test.
+	type outcome struct {
+		res *Result
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := Run(context.Background(), cfg)
+		done <- outcome{res, err}
+	}()
+	var res *Result
+	select {
+	case o := <-done:
+		if o.err != nil {
+			t.Fatalf("the runtime failed: %v\n%q", o.err, out.String())
+		}
+		res = o.res
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the child still waits for the end of the input: %q", out.String())
+	}
+	got := out.String()
+	if !strings.Contains(got, "input ended") {
+		t.Fatalf("the child did not get the end of the input: %q", got)
+	}
+	if n := strings.Count(got, "one line of input"); n != 1 {
+		t.Fatalf("the input shows %d times, not once: %q", n, got)
+	}
+	if !strings.Contains(got, "TTY") {
+		t.Fatalf("the output is not a terminal: %q", got)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("the child exited with %d", res.ExitCode)
+	}
+}
+
 // itoa turns a small number into text without a dependency.
 func itoa(n int) string {
 	if n == 0 {
