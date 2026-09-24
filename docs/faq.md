@@ -73,6 +73,77 @@ the value your program gets is the real one.
 `run` reads only two names by default on purpose. A wider default would change the behaviour of
 every project, and only you know which of the eight names your program uses.
 
+## Tools that read `.env` by themselves
+
+Some tools read `.env` from the disk and do not use the environment that `secretveil run`
+makes. After `init`, such a tool gets the handle text `sv://api_key` and not the value. The
+program then fails at its first call. The failure is loud and it leaks nothing, but the setup
+needs a change.
+
+Each tool below reads the file by itself. For each one, stop the tool from reading `.env`, and
+start the program through `secretveil run`.
+
+### Docker Compose `env_file:`
+
+Compose copies the lines of an `env_file:` into the container as they are, so the container
+gets the handle. Remove `env_file:` and name each variable in `environment:`:
+
+```yaml
+services:
+  api:
+    environment:
+      API_KEY: ${API_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+```
+
+Then start Compose through `run`:
+
+```sh
+secretveil run -- docker compose up
+```
+
+Compose takes `${API_KEY}` from its own environment first, and `run` put the value there.
+
+A value in a container is outside the protection of secretveil. Anyone who can reach the
+Docker daemon can read it with `docker inspect` or `docker exec <container> env`, and the
+output of those commands is not filtered unless they run through `secretveil run` as well.
+
+### VS Code `launch.json` `envFile`, and JetBrains run configurations
+
+The debugger reads the file named in `envFile` and puts its lines in the environment of the
+program, over what the environment already holds. Remove `envFile`. Then start the program
+through an npm script that uses `run`:
+
+```json
+// package.json
+"scripts": { "dev": "secretveil run -- node server.js" }
+```
+
+```json
+// .vscode/launch.json
+{
+  "type": "node",
+  "request": "launch",
+  "name": "dev",
+  "runtimeExecutable": "npm",
+  "runtimeArgs": ["run", "dev"]
+}
+```
+
+The debugger attaches through `NODE_OPTIONS`, which `run` passes to the program unchanged. In a
+JetBrains IDE, remove the `.env` file from the run configuration, and make an npm run
+configuration for the same script.
+
+### direnv with `dotenv` in `.envrc`
+
+direnv puts the lines of `.env` in your shell, so the shell holds `API_KEY=sv://api_key`.
+`secretveil run` sees that the value is a handle and replaces it with the real value, so a
+command under `run` works. A command that you start without `run` gets the handle, the same as
+if direnv were not there.
+
+Keep settings that are not secret in `.envrc` if you like, and start the program through
+`run`.
+
 ## What happens to the value in my git history?
 
 Nothing. secretveil hides a value from the moment you run `init`. It cannot reach into a

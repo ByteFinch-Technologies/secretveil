@@ -160,6 +160,10 @@ values in the environment of the child process, and every one of those loaders g
 in the environment priority over the same variable in a file. The measurement is D4 in
 [`docs/decisions.md`](docs/decisions.md).
 
+Some tools read `.env` from the disk by themselves: Docker Compose `env_file:`, the VS Code
+`envFile` setting, JetBrains run configurations and direnv. Each one needs a small change, which
+is in [tools that read `.env` by themselves](docs/faq.md#tools-that-read-env-by-themselves).
+
 Put it in `package.json`, so that nobody has to remember it:
 
 ```json

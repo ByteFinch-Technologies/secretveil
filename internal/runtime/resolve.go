@@ -106,9 +106,14 @@ func Resolve(ctx context.Context, st store.Store, opt Options) (*Resolution, err
 		parent = os.Environ()
 	}
 
+	// held names each variable whose parent value wins over the files. A
+	// parent value that holds a handle does not win. It is not a value. It is
+	// the text of a .env file that another loader put in the environment
+	// first, such as direnv with dotenv in .envrc, and keeping it gave the
+	// child sv://api_key in place of the key.
 	held := map[string]bool{}
 	for _, e := range parent {
-		if k, _, ok := strings.Cut(e, "="); ok {
+		if k, v, ok := strings.Cut(e, "="); ok && !handle.Contains(v) {
 			held[k] = true
 		}
 	}
@@ -228,7 +233,16 @@ func Resolve(ctx context.Context, st store.Store, opt Options) (*Resolution, err
 		}
 	}
 
-	res.Env = append(res.Env, parent...)
+	for _, e := range parent {
+		// A parent handle that a file replaces is left out, so the child has
+		// one entry for the name.
+		if k, _, ok := strings.Cut(e, "="); ok && !held[k] {
+			if _, replaced := final[k]; replaced {
+				continue
+			}
+		}
+		res.Env = append(res.Env, e)
+	}
 	for _, k := range order {
 		res.Env = append(res.Env, k+"="+final[k])
 	}
