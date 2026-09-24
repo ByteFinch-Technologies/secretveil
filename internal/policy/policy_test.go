@@ -100,6 +100,146 @@ func TestInlineCodeFlagsAreRefused(t *testing.T) {
 	}
 }
 
+// TestAWrapperDoesNotHideTheProgram covers issue 55. A program that starts
+// another program must not undo the rules with one word in front.
+func TestAWrapperDoesNotHideTheProgram(t *testing.T) {
+	refused := [][]string{
+		{"nice", "sh", "-c", "echo $DB_PASS | rev"},
+		{"nice", "-n", "10", "bash", "-c", "x"},
+		{"nohup", "bash", "-c", "x"},
+		{"time", "sh", "-c", "x"},
+		{"/usr/bin/time", "-p", "sh", "-c", "x"},
+		{"timeout", "5", "sh", "-c", "x"},
+		{"stdbuf", "-o0", "sh", "-c", "x"},
+		{"setsid", "sh", "-c", "x"},
+		{"xargs", "-I{}", "sh", "-c", "x"},
+		{"find", ".", "-maxdepth", "0", "-exec", "sh", "-c", "x", ";"},
+		{"find", ".", "-execdir", "/bin/sh", "-c", "x", "{}", "+"},
+		{"fd", "-x", "sh", "-c", "x"},
+		{"command", "printenv"},
+		{"caffeinate", "-i", "printenv"},
+		{"nice", "node", "-e", "x"},
+		{"timeout", "5", "python3", "-c", "x"},
+		{"npx", "sh", "-c", "x"},
+		{"npm", "exec", "--", "bash", "-c", "x"},
+		{"yarn", "dlx", "printenv"},
+		// A wrapper inside a wrapper.
+		{"nice", "nohup", "timeout", "5", "sh", "-c", "x"},
+		{"nice", "timeout", "5", "git", "-c", "alias.x=!sh", "x"},
+	}
+	for _, args := range refused {
+		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%v was allowed, and the wrapper starts a program the rules refuse", args)
+			}
+		})
+	}
+
+	// A wrapper around an ordinary command stays useful, and a word that is
+	// only a value is not read as a program.
+	permitted := [][]string{
+		{"nice", "npm", "test"},
+		{"timeout", "60", "go", "test", "./..."},
+		{"nohup", "node", "server.js"},
+		{"xargs", "rm"},
+		{"find", ".", "-name", "sh"},
+		{"find", ".", "-name", "*.log", "-exec", "rm", "{}", ";"},
+		{"npm", "install", "--save-dev", "prettier"},
+		{"npm", "exec", "prettier", "--", "--check", "."},
+		{"npx", "prettier", "--write", "."},
+		{"command", "-v", "node"},
+	}
+	for _, args := range permitted {
+		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
+			if !allowed(t, args...) {
+				t.Errorf("%v was refused, and it is an ordinary command", args)
+			}
+		})
+	}
+}
+
+// TestARefusalThroughAWrapperNamesBoth tells the developer why the rules
+// refused a program they did not type first.
+func TestARefusalThroughAWrapperNamesBoth(t *testing.T) {
+	err := Default().Check([]string{"nice", "-n", "5", "/bin/sh", "-c", "x"})
+	var r *Refusal
+	if !errors.As(err, &r) {
+		t.Fatalf("got %v, want a Refusal", err)
+	}
+	if r.Program != "sh through nice" {
+		t.Errorf("the refusal names %q, want \"sh through nice\"", r.Program)
+	}
+}
+
+// TestAnAllowListAppliesToTheWrappedProgram stops a wrapper in the allow list
+// from carrying in a program that is not.
+func TestAnAllowListAppliesToTheWrappedProgram(t *testing.T) {
+	p := Default()
+	p.Agent.Allow = []string{"nice", "npm"}
+	if err := p.Check([]string{"nice", "npm", "test"}); err != nil {
+		t.Errorf("nice and npm are both allowed and the command was refused: %v", err)
+	}
+	if err := p.Check([]string{"nice", "node", "server.js"}); err == nil {
+		t.Error("node is not in the allow list and nice carried it in")
+	}
+}
+
+// TestProgramsThatRunShellText covers the deny names that issue 55 added.
+func TestProgramsThatRunShellText(t *testing.T) {
+	for _, args := range [][]string{
+		{"awk", `BEGIN{print ENVIRON["DB_PASS"]}`},
+		{"gawk", "BEGIN{}"},
+		{"mawk", "BEGIN{}"},
+		{"nawk", "BEGIN{}"},
+		{"jq", "-n", "env"},
+		{"script", "-q", "/dev/null", "printenv"},
+		{"watch", "printenv"},
+		{"sudo", "-s"},
+		{"su", "-c", "printenv"},
+		{"chroot", "/"},
+		{"unshare", "-r"},
+		{"flock", "/tmp/x", "-c", "printenv"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%v was allowed, and it runs shell text or program text from an argument", args)
+			}
+		})
+	}
+}
+
+// TestGitConfigFromTheCommandLine covers "git -c alias.x=!cmd x", which runs a
+// shell. The -c is a global option, and after the subcommand the same letters
+// mean something else.
+func TestGitConfigFromTheCommandLine(t *testing.T) {
+	for _, args := range [][]string{
+		{"git", "-c", "alias.x=!echo $DB_PASS | rev", "x"},
+		{"git", "-c", "core.pager=sh -c printenv", "log"},
+		{"git", "-C", "sub", "-c", "alias.x=!sh", "x"},
+		{"git", "--no-pager", "-c", "alias.x=!sh", "x"},
+		{"git", "--config-env=alias.x=CMD", "x"},
+		{"git", "--config-env", "alias.x=CMD", "x"},
+	} {
+		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%v was allowed, and it runs a shell", args)
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"git", "status"},
+		{"git", "commit", "-c", "HEAD"},
+		{"git", "grep", "-c", "TODO"},
+		{"git", "-C", "sub", "log", "-c"},
+	} {
+		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
+			if !allowed(t, args...) {
+				t.Errorf("%v was refused, and it runs no shell", args)
+			}
+		})
+	}
+}
+
 // TestAFlagAfterTheEndOfFlagsIsAValue guards a wrong refusal. Everything after
 // a bare -- belongs to the program, so a script argument that reads -e is not
 // an inline code flag.
@@ -244,9 +384,40 @@ func TestTheSampleFileParses(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"bash", "-c", "x"}, {"printenv"}, {"node", "-e", "x"}, {"ssh", "host"},
+		{"nice", "sh", "-c", "x"}, {"jq", "-n", "env"}, {"awk", "BEGIN{}"},
+		{"git", "-c", "alias.x=!sh", "x"}, {"npx", "-c", "x"}, {"sudo", "-s"},
+		{"git", "commit", "-c", "HEAD"},
 	} {
 		if (p.Check(args) == nil) != (d.Check(args) == nil) {
 			t.Errorf("the sample and the default disagree about %v", args)
+		}
+	}
+}
+
+// TestTheSampleHoldsEveryDefaultRule keeps the two lists in step. A name that
+// is added to the default and not to the sample is lost in every project that
+// runs init.
+func TestTheSampleHoldsEveryDefaultRule(t *testing.T) {
+	p, err := Load(writePolicy(t, Sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := Default()
+	for _, name := range d.Agent.Deny {
+		if p.Check([]string{name}) == nil {
+			t.Errorf("the sample allows %s, and the default refuses it", name)
+		}
+	}
+	for name, flags := range d.Agent.InlineCode {
+		got, ok := p.Agent.InlineCode[name]
+		if !ok {
+			t.Errorf("the sample has no inline_code rule for %s", name)
+			continue
+		}
+		for _, f := range flags {
+			if !contains(got, f) {
+				t.Errorf("the sample inline_code rule for %s does not hold %s", name, f)
+			}
 		}
 	}
 }

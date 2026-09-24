@@ -181,6 +181,45 @@ func TestCase2AnAgentMayNotRunInlineCode(t *testing.T) {
 	}
 }
 
+// Case 2b. A wrapper in front of a refused program, from issue 55. Each of
+// these printed a secret reversed before the fix, and the output filter cannot
+// catch a reversed value. The rules have to refuse them.
+func TestCase2bAWrapperDoesNotHideTheProgram(t *testing.T) {
+	root := project(t)
+	backwards := func(s string) string {
+		r := []rune(s)
+		for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+			r[i], r[j] = r[j], r[i]
+		}
+		return string(r)
+	}
+	for _, args := range [][]string{
+		{"nice", "sh", "-c", "echo $API_KEY | rev"},
+		{"timeout", "5", "sh", "-c", "echo $API_KEY | rev"},
+		{"xargs", "sh", "-c", "echo $API_KEY | rev"},
+		{"find", ".", "-maxdepth", "0", "-exec", "sh", "-c", "echo $API_KEY | rev", ";"},
+		{"git", "-c", "alias.x=!echo $API_KEY | rev", "x"},
+		{"awk", `BEGIN{s=ENVIRON["API_KEY"]; for(i=length(s);i>0;i--) printf substr(s,i,1)}`},
+		{"jq", "-n", "env"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			r := sv(t, root, nil, append([]string{"run", "--"}, args...)...)
+			if r.code == 0 {
+				t.Fatalf("the command ran. It must be refused:\n%s", r.all())
+			}
+			if !strings.Contains(r.stderr, "may not run") {
+				t.Errorf("the refusal does not say what was refused:\n%s", r.all())
+			}
+			mustNotLeak(t, r, "case 2b")
+			for name, v := range secrets {
+				if strings.Contains(r.all(), backwards(v)) {
+					t.Errorf("the value of %s reached the output reversed:\n%s", name, r.all())
+				}
+			}
+		})
+	}
+}
+
 // Case 3. An honest one.
 //
 // The policy reads the name of a program. It cannot read what the program does.

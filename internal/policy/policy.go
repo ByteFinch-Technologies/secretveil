@@ -73,6 +73,14 @@ func Default() *Policy {
 			"ash", "busybox", "pwsh", "powershell", "cmd", "cmd.exe",
 			// These print the environment and do nothing else.
 			"env", "printenv", "set", "export", "declare", "printf",
+			// These start a shell by themselves, or start one when no program
+			// follows them, or run shell text given as an argument. An agent
+			// can pipe shell text into a shell that reads its input.
+			"script", "watch", "su", "sudo", "doas", "chroot", "unshare",
+			"nsenter", "flock",
+			// The program text of these is always an argument, and
+			// "jq -n env" prints the whole environment.
+			"awk", "gawk", "mawk", "nawk", "jq",
 		},
 		InlineCode: map[string][]string{
 			"node": {"-e", "--eval", "-p", "--print"},
@@ -94,7 +102,15 @@ func Default() *Policy {
 			"php":     {"-r"},
 			"lua":     {"-e"},
 			"R":       {"-e"},
-			"ssh":     {}, // any use, because it moves data off the machine
+			// An alias or a pager set with -c runs a shell. These are global
+			// options, so the check reads only the words before the
+			// subcommand. See globalOptions.
+			"git": {"-c", "--config-env"},
+			// These run a shell command given as an argument.
+			"npm":  {"-c", "--call"},
+			"npx":  {"-c", "--call"},
+			"pnpm": {"-c", "--shell-mode"},
+			"ssh":  {}, // any use, because it moves data off the machine
 		},
 	}}
 }
@@ -294,14 +310,109 @@ func (r *Refusal) Error() string {
 	return fmt.Sprintf("an AI agent may not run %s here: %s. %s", r.Program, r.Rule, r.Advice)
 }
 
+// wrappers names a program that starts another program. "nice sh -c x" runs
+// sh, so a test of the first word alone lets the shell through.
+//
+// For each wrapper, the list names the words after which the other program
+// starts. An empty list means that it can start anywhere after the wrapper.
+// A word that is not one of these, such as "find . -name sh", is a value and
+// not a program, so the check does not read it as a command.
+//
+// The list is in the code and not in the policy file, because a wrapper that
+// a file removes is a door, and nothing is gained when a file adds one.
+var wrappers = map[string][]string{
+	"nice": nil, "nohup": nil, "time": nil, "timeout": nil, "stdbuf": nil,
+	"setsid": nil, "xargs": nil, "command": nil, "exec": nil, "builtin": nil,
+	"ionice": nil, "taskset": nil, "chrt": nil, "caffeinate": nil,
+	"unbuffer": nil, "strace": nil, "ltrace": nil, "arch": nil,
+	"sandbox-exec": nil, "npx": nil, "bunx": nil, "pnpx": nil,
+	"find": {"-exec", "-execdir", "-ok", "-okdir"},
+	"fd":   {"-x", "--exec", "-X", "--exec-batch"},
+	"npm":  {"exec", "x"},
+	"pnpm": {"exec", "dlx"},
+	"yarn": {"exec", "dlx"},
+}
+
+// globalOptions names a program whose inline code flags are global options.
+// They come before the subcommand, and after it the same letters mean
+// something else: "git commit -c" reuses a message and "git grep -c" counts.
+// The list holds each global option that takes the next word as its value.
+var globalOptions = map[string][]string{
+	"git": {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"},
+}
+
 // Check reports whether an agent may run this command.
 //
 // It returns nil when the command is allowed. The caller passes the whole
 // argument list, the same one that would go to the child process.
+//
+// A wrapper such as nice or xargs is checked, and then the program that it
+// starts is checked as if it were the command. A refusal of that program names
+// the wrapper too.
 func (p *Policy) Check(args []string) error {
 	if !p.Agent.Enforce || len(args) == 0 {
 		return nil
 	}
+	if err := p.checkOne(args); err != nil {
+		return err
+	}
+	name := programName(args[0])
+	inner := p.wrapped(name, args[1:])
+	if inner == nil {
+		return nil
+	}
+	err := p.Check(inner)
+	var r *Refusal
+	if errors.As(err, &r) {
+		r.Program += " through " + name
+	}
+	return err
+}
+
+// wrapped returns the command that a wrapper starts, or nil when name is not a
+// wrapper or no program the rules know follows it.
+//
+// The rules can only find a program they know: a name in the deny list, a
+// program with inline code rules, or another wrapper. "nice ./mytool" starts a
+// program with a name nobody listed, and that is the limit of a name test.
+func (p *Policy) wrapped(name string, rest []string) []string {
+	starts, ok := wrappers[name]
+	if !ok {
+		return nil
+	}
+	if len(starts) > 0 {
+		i := 0
+		for i < len(rest) && !contains(starts, rest[i]) {
+			i++
+		}
+		if i == len(rest) {
+			return nil
+		}
+		rest = rest[i+1:]
+	}
+	for i, a := range rest {
+		if p.known(programName(a)) {
+			return rest[i:]
+		}
+	}
+	return nil
+}
+
+// known reports whether a name is a program the rules have something to say
+// about.
+func (p *Policy) known(name string) bool {
+	if contains(p.Agent.Deny, name) {
+		return true
+	}
+	if _, ok := p.Agent.InlineCode[name]; ok {
+		return true
+	}
+	_, ok := wrappers[name]
+	return ok
+}
+
+// checkOne applies the rules to the first word of a command.
+func (p *Policy) checkOne(args []string) error {
 	name := programName(args[0])
 
 	for _, d := range p.Agent.Deny {
@@ -322,7 +433,11 @@ func (p *Policy) Check(args []string) error {
 				Advice:  "Run it yourself in your own terminal.",
 			}
 		}
-		if bad := firstMatch(args[1:], flags); bad != "" {
+		scan := args[1:]
+		if values, ok := globalOptions[name]; ok {
+			scan = leading(scan, values)
+		}
+		if bad := firstMatch(scan, flags); bad != "" {
 			// A word such as "exec" or "repl" is a subcommand and not a
 			// flag. Calling it a flag makes the developer look for a flag
 			// that is not there.
@@ -368,6 +483,22 @@ func firstMatch(args, flags []string) string {
 		}
 	}
 	return ""
+}
+
+// leading returns the options before the first word that is not an option.
+// A word that follows an option in values is that option's value, so
+// "git -C dir -c x" reads the -c.
+func leading(args, values []string) []string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			return args[:i]
+		}
+		if contains(values, a) {
+			i++
+		}
+	}
+	return args
 }
 
 // programName reduces a path to the name of the program.
@@ -424,7 +555,14 @@ deny = [
   "sh", "bash", "zsh", "dash", "fish", "ksh", "csh", "tcsh",
   "ash", "busybox", "pwsh", "powershell", "cmd",
   "env", "printenv", "set", "export", "declare", "printf",
+  "script", "watch", "su", "sudo", "doas", "chroot", "unshare", "nsenter",
+  "flock",
+  "awk", "gawk", "mawk", "nawk", "jq",
 ]
+
+# A program that starts another program, such as nice, timeout, xargs or
+# "find -exec", does not hide it. The rules check the program it starts as
+# well. That list is in secretveil itself, and this file cannot change it.
 
 # Flags that make a program run code straight from the command line. A flag
 # like this turns an interpreter into a shell.
@@ -439,6 +577,10 @@ perl = ["-e", "-E"]
 php = ["-r"]
 lua = ["-e"]
 R = ["-e"]
+git = ["-c", "--config-env"]
+npm = ["-c", "--call"]
+npx = ["-c", "--call"]
+pnpm = ["-c", "--shell-mode"]
 # An empty list means the program is refused whatever its flags are.
 ssh = []
 `
