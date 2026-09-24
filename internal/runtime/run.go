@@ -126,7 +126,9 @@ func runPipes(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	stopSignals := forwardSignals(cmd)
+	// The child is in the process group of secretveil, so a key such as
+	// Ctrl-C at the terminal reaches it directly.
+	stopSignals := forwardSignals(cmd, true)
 	stopTimer := startIdleFlush(idle, wOut, wErr)
 
 	err := cmd.Wait()
@@ -187,7 +189,9 @@ func runPTY(ctx context.Context, cmd *exec.Cmd, res *Result, m *redact.Matcher,
 	}
 
 	w := redact.NewWriter(stdout, m)
-	stopSignals := forwardSignals(cmd)
+	// The child has a session of its own, so no key at the real terminal
+	// reaches it. Every signal to secretveil is passed on.
+	stopSignals := forwardSignals(cmd, false)
 	stopTimer := startIdleFlush(idle, w)
 
 	var wg sync.WaitGroup
@@ -277,7 +281,15 @@ func startIdleFlush(every time.Duration, writers ...*redact.Writer) func() {
 // The child is the program the user meant to run, so the child must decide
 // what a signal means. A build tool that catches SIGINT to clean up must still
 // get the chance to do it.
-func forwardSignals(cmd *exec.Cmd) func() {
+//
+// sameGroup is true when the child is in the process group of secretveil.
+// Then a Ctrl-C or a Ctrl-\ at the terminal goes to the child directly, and a
+// second copy from here gave the child two signals for one key press. Many
+// tools, Terraform among them, read a second Ctrl-C as "stop now with no clean
+// up". So SIGINT and SIGQUIT are not passed on while secretveil is in the
+// foreground of its terminal. They are passed on in every other case, so a
+// kill -INT from a script still reaches the child.
+func forwardSignals(cmd *exec.Cmd, sameGroup bool) func() {
 	ch := make(chan os.Signal, 8)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP,
 		syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
@@ -289,6 +301,9 @@ func forwardSignals(cmd *exec.Cmd) func() {
 			case <-done:
 				return
 			case s := <-ch:
+				if sameGroup && fromKeyboard(s) && inForeground() {
+					continue
+				}
 				if cmd.Process != nil {
 					_ = cmd.Process.Signal(s)
 				}
@@ -301,6 +316,11 @@ func forwardSignals(cmd *exec.Cmd) func() {
 			close(done)
 		})
 	}
+}
+
+// fromKeyboard reports whether a terminal sends this signal for a key press.
+func fromKeyboard(s os.Signal) bool {
+	return s == syscall.SIGINT || s == syscall.SIGQUIT
 }
 
 // followResize keeps the size of the pseudo terminal equal to the size of the
