@@ -153,6 +153,12 @@ both cases, the URL escape and the JSON string escape. Both base64 alphabets mat
 alphabet is the one a JWT uses, and it is what Python `urlsafe_b64encode` and Node
 `base64url` produce.
 
+A value that holds a newline, such as a PEM private key, gets two more forms. The first is
+the value as a terminal prints it, because the terminal driver turns each `\n` into `\r\n`.
+The second is each line of at least six characters on its own, because a program can print
+the body of a key without its first and last line. A PEM boundary line such as
+`-----BEGIN PRIVATE KEY-----` is public text, so the filter leaves it in the output.
+
 ### 3.3 The cheap environment dump
 
 `bash -c printenv`, `node -e 'console.log(process.env)'`, `python3 -c 'import os; print(os.environ)'`

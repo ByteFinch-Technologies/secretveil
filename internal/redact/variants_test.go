@@ -71,3 +71,62 @@ func TestEncodingsHoldNoValueBelowTheFloor(t *testing.T) {
 		t.Fatalf("the skipped list is %v, want [pin]", res.Skipped)
 	}
 }
+
+// multiLineKey is a synthetic value in the shape of a PEM private key. It is
+// not a key.
+const multiLineKey = "-----BEGIN FAKE KEY-----\n" +
+	"TXVsdGlMaW5lQm9keU9uZS1RN3hSMm1WbjdwTA\n" +
+	"TXVsdGlMaW5lQm9keVR3by1XNGFaOWtKM3NIdA\n" +
+	"-----END FAKE KEY-----"
+
+// TestAMultiLineValueIsRemovedInEveryForm covers a value that holds a
+// newline. A terminal prints each "\n" as "\r\n", and a program can print the
+// body of a key without its first and last line. Both used to pass the filter.
+func TestAMultiLineValueIsRemovedInEveryForm(t *testing.T) {
+	lines := strings.Split(multiLineKey, "\n")
+	forms := []struct {
+		name string
+		text string
+	}{
+		{"the value itself", multiLineKey},
+		{"the value as a terminal prints it", strings.ReplaceAll(multiLineKey, "\n", "\r\n")},
+		{"the first body line alone", lines[1]},
+		{"the second body line alone", lines[2]},
+	}
+
+	res := Build(map[string]string{"signing_key": multiLineKey}, Options{})
+	for _, f := range forms {
+		t.Run(f.name, func(t *testing.T) {
+			for _, chunk := range []int{1, 7, 4096} {
+				got := run(res.Matcher, "log: "+f.text+" end", chunk)
+				if strings.Contains(got, f.text) {
+					t.Errorf("the %s survived the filter with chunk %d:\n%q", f.name, chunk, got)
+				}
+				for _, l := range lines[1:3] {
+					if strings.Contains(got, l) {
+						t.Errorf("a body line survived the filter with chunk %d:\n%q", chunk, got)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestAnArmourLineIsNotASecret keeps the public boundary line of a PEM value
+// in the output. It appears in logs that hold no secret, and a filter that
+// removed it would damage them.
+func TestAnArmourLineIsNotASecret(t *testing.T) {
+	res := Build(map[string]string{"signing_key": multiLineKey}, Options{})
+	const text = "expected -----BEGIN FAKE KEY----- at the start"
+	if got := run(res.Matcher, text, 4096); got != text {
+		t.Errorf("the armour line changed:\n got %q\nwant %q", got, text)
+	}
+}
+
+// TestAOneLineValueGetsNoLineForms keeps the needle count of an ordinary value
+// as it was.
+func TestAOneLineValueGetsNoLineForms(t *testing.T) {
+	if forms := lineForms("OneLineValue-Z3k9Qw", DefaultMinLen); forms != nil {
+		t.Errorf("a value on one line got line forms: %q", forms)
+	}
+}

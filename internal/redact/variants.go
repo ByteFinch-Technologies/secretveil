@@ -77,6 +77,9 @@ func Build(values map[string]string, opt Options) Result {
 			continue
 		}
 		add(v, ref)
+		for _, form := range lineForms(v, minLen) {
+			add(form, ref)
+		}
 		if opt.NoEncodings {
 			continue
 		}
@@ -114,6 +117,40 @@ func Encodings(v string) []string {
 	keep(h)
 	keep(strings.ToUpper(h))
 	return out
+}
+
+// lineForms returns the extra needles for a value that holds a newline, such
+// as a PEM private key. It returns nothing for a value on one line.
+//
+// Two forms are needed.
+//
+// The first is the value as a terminal prints it. The terminal driver turns
+// each "\n" into "\r\n" (the ONLCR flag), so the bytes on a pseudo terminal
+// are not the bytes of the value, and the value itself never matches there.
+//
+// The second is each line on its own. A program can print the body of a key
+// without its first and last line, and the body is the secret. A line shorter
+// than minLen is left out for the same reason a short value is. A PEM armour
+// line such as "-----BEGIN PRIVATE KEY-----" is left out as well, because it
+// is public text that appears in output that holds no secret.
+func lineForms(v string, minLen int) []string {
+	if !strings.Contains(v, "\n") {
+		return nil
+	}
+	out := []string{strings.ReplaceAll(v, "\n", "\r\n")}
+	for _, line := range strings.Split(v, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < minLen || isArmour(line) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// isArmour reports whether a line is a PEM boundary line.
+func isArmour(line string) bool {
+	return strings.HasPrefix(line, "-----BEGIN ") || strings.HasPrefix(line, "-----END ")
 }
 
 // base64Parts returns the part of the base64 text that holds the value, for
