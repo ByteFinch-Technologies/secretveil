@@ -36,7 +36,12 @@ always carries one and almost no secret needs one. Use --raw to keep every byte.
 
 After set, put the handle in your .env file by hand:
 
-  API_KEY=sv://api_key`,
+  API_KEY=sv://api_key
+
+An AI agent may add a new reference. To replace a value that is already in the
+store needs a human at a terminal, because a new value can send a program to a
+host that the agent controls. Every write goes into the audit log, with the
+reference and never the value.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
@@ -48,6 +53,36 @@ After set, put the handle in your .env file by hand:
 			if err != nil {
 				return err
 			}
+			who := detect.Detect()
+			_, file := openStore(root)
+			ctx := ctxOrBackground(cmd.Context())
+
+			refuse := func() error {
+				why := fmt.Sprintf(
+					"%s already has a value, and to replace it needs a human at a terminal. "+
+						"This caller looks like a %s, because %s", ref, who.Caller, who.Reason)
+				_ = audit.New(root).Write(audit.Record{
+					Event:  audit.EventWrite,
+					Caller: who.Caller.String(),
+					Reason: who.Reason,
+					Refs:   []string{ref},
+					Detail: "refused: " + why,
+				})
+				return errors.New(why)
+			}
+
+			// The test here gives the refusal before the value is read, so a
+			// developer does not type a value for nothing. Create below makes
+			// the same test again under the store lock.
+			_, getErr := file.Get(ctx, ref)
+			exists := getErr == nil
+			if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
+				return getErr
+			}
+			if exists && who.Caller != detect.Human {
+				return refuse()
+			}
+
 			value, err := readSecret(cmd, from, ref)
 			if err != nil {
 				return err
@@ -59,10 +94,31 @@ After set, put the handle in your .env file by hand:
 				return errors.New("the value is empty, so nothing was written")
 			}
 
-			_, file := openStore(root)
-			if err := file.Set(ctxOrBackground(cmd.Context()), ref, value); err != nil {
+			if who.Caller == detect.Human {
+				err = file.Set(ctx, ref, value)
+			} else {
+				err = file.Create(ctx, ref, value)
+				if errors.Is(err, store.ErrExists) {
+					return refuse()
+				}
+			}
+			if err != nil {
 				return err
 			}
+			detail := "added"
+			if exists {
+				detail = "replaced"
+			}
+			// The logger is made after the write. audit.New turns the log off
+			// when .secretveil does not exist, and the first set of a new
+			// project is the write that makes it.
+			_ = audit.New(root).Write(audit.Record{
+				Event:  audit.EventWrite,
+				Caller: who.Caller.String(),
+				Reason: who.Reason,
+				Refs:   []string{ref},
+				Detail: detail,
+			})
 			// The message names the reference and the length. It never prints
 			// the value, because the terminal of a developer is often shared
 			// with an agent that reads the same window.
@@ -208,18 +264,35 @@ func newRemove() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "rm <ref>",
 		Aliases: []string{"remove", "delete"},
-		Short:   "Remove one secret from the store",
+		Short:   "Remove one secret from the store. Needs a human at a terminal.",
 		Long: `rm removes one value from the store. The handle in your .env file stays, so
 "secretveil run" will report the reference as missing until you set it again or
 remove the line.
 
-The value is gone for good. There is no other copy.`,
+The value is gone for good. There is no other copy. So rm needs a human caller,
+the same as "get --reveal". A caller with no terminal, or with the marker of an
+AI tool in its environment, is refused, and the refusal goes into the audit log.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
 			root, err := rootFrom(nil)
 			if err != nil {
 				return err
+			}
+			log := audit.New(root)
+			who := detect.Detect()
+			if who.Caller != detect.Human {
+				why := fmt.Sprintf(
+					"rm needs a human at a terminal, and this caller looks like a %s, because %s",
+					who.Caller, who.Reason)
+				_ = log.Write(audit.Record{
+					Event:  audit.EventDelete,
+					Caller: who.Caller.String(),
+					Reason: who.Reason,
+					Refs:   []string{ref},
+					Detail: "refused: " + why,
+				})
+				return errors.New(why)
 			}
 			_, file := openStore(root)
 			ctx := ctxOrBackground(cmd.Context())
@@ -239,6 +312,12 @@ The value is gone for good. There is no other copy.`,
 			if err := file.Delete(ctx, ref); err != nil {
 				return err
 			}
+			_ = log.Write(audit.Record{
+				Event:  audit.EventDelete,
+				Caller: who.Caller.String(),
+				Reason: who.Reason,
+				Refs:   []string{ref},
+			})
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed %s from the store.\n", ref)
 			return nil
 		},

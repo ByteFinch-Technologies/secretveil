@@ -72,6 +72,10 @@ so the first one is dead text, but it still holds whatever the developer put the
 gives each record its own name and rewrites both, so no value stays in the file. Two records
 that hold the same value keep one name, because one name for one value is correct.
 
+A second `init` never replaces a value that is already in the store. A new file that holds a
+different value under a name the store already has gets a new name, in the same way. The same
+value under the same name keeps the name.
+
 `init` needs an answer at the prompt. A command with no terminal and no `--yes` stops,
 because `init` rewrites files in the project and a tool that runs it without a human behind
 it must say so with the flag.
@@ -193,6 +197,10 @@ After `set`, put the handle in the `.env` file by hand:
 API_KEY=sv://api_key
 ```
 
+An AI agent may add a new reference. To replace a value that is already in the store needs a
+human caller, because a new value can send a program to a host that the agent controls. Each
+write goes into the audit log, with the reference and never the value.
+
 ---
 
 ## get
@@ -229,6 +237,9 @@ secretveil rm <ref>
 
 Removes one secret from the store. Run `doctor` after it: a handle left in a file with no
 value behind it is exactly what `doctor` reports.
+
+The value is gone for good, so `rm` needs a human caller, the same as `get --reveal`. A
+refusal and each removal go into the audit log.
 
 ---
 

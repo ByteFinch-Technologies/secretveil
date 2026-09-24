@@ -391,6 +391,30 @@ func (s *Store) Set(_ context.Context, ref, value string) error {
 	})
 }
 
+// Create writes a value only when the reference has none. It returns
+// store.ErrExists and changes nothing when the reference already has a value.
+//
+// The test and the write happen under one lock. A test before a plain Set
+// leaves a gap in which another process can write the same reference, and the
+// caller that may only add a value would then replace one.
+func (s *Store) Create(_ context.Context, ref, value string) error {
+	if !store.ValidRef(ref) {
+		return fmt.Errorf("bad reference: %q", ref)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.withWriteLock(true, func() error {
+		if err := s.load(); err != nil {
+			return err
+		}
+		if _, ok := s.values[ref]; ok {
+			return fmt.Errorf("%w: %s", store.ErrExists, ref)
+		}
+		s.values[ref] = value
+		return s.save()
+	})
+}
+
 // SetMany writes several values in one encryption pass. The init flow uses it,
 // because a separate pass for each secret is slow and each pass rewrites the
 // whole file.
