@@ -178,6 +178,7 @@ func checkCaller() finding {
 		f.level = levelNote
 		f.detail = []string{
 			"An agent may not start a shell here. Set " + detect.EnvOverride + "=human if that is wrong.",
+			"The marker of an AI tool wins over " + detect.EnvOverride + ". A person in a terminal that an AI tool started must use a terminal of their own.",
 		}
 	}
 	return f

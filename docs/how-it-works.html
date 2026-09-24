@@ -634,7 +634,8 @@ Error: connect failed with key <span class="h">sv://api_key</span></div>
   <div class="callout"><b>An unknown caller is treated as an agent.</b> A command with no terminal
   and no marker could be a script you wrote, or a tool nobody has heard of yet. The safe reading
   of an unknown caller is the one with the least power. Set
-  <code>SECRETVEIL_CALLER=human</code> when that is wrong.</div>
+  <code>SECRETVEIL_CALLER=human</code> when that is wrong. The marker of an AI tool wins over
+  this variable, so an agent cannot use it to call itself a human.</div>
 
   <p class="eyebrow">read this part twice</p>
   <h2>Where the line is</h2>

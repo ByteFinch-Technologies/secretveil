@@ -122,6 +122,29 @@ a file it did not open. That check exists because an earlier build ended its rep
 The list is a list of known names, not a search. A credential in a file this list does not
 name is not found and is not reported.
 
+### 2.8 An agent can hide its own marker
+
+The caller rules in section 4 read the environment and the terminal. An agent that runs
+shell commands controls both of them.
+
+- `env -u CLAUDECODE secretveil ...` removes the marker of the AI tool.
+- `script -q /dev/null secretveil ...` gives the command a terminal on standard input and
+  standard output.
+
+Together, these two steps make an agent look like a human. secretveil cannot tell the
+difference, because the process sees the same environment and the same terminal that a
+person gives it. No local check can close this, because the agent runs with the rights of
+the developer.
+
+The easy routes are closed. An agent marker wins over `SECRETVEIL_CALLER` and over a
+pipeline marker, so `SECRETVEIL_CALLER=human` or `CI=1` in front of a command does not
+change the answer. The route above needs two deliberate steps, and it is an attack, not a
+mistake.
+
+What this means for you: the caller rules stop an agent that reads and prints by habit. They
+do not stop an agent that a hostile instruction tells to escape. Read the audit log. A
+`get --reveal` or a `restore` from an agent session is a record there.
+
 ---
 
 ## 3. What secretveil does stop
@@ -202,17 +225,34 @@ Three rules get different powers:
 
 | Caller | How it is recognised | What it may do |
 |---|---|---|
+| Agent | A marker such as `CLAUDECODE` is set, **or nothing matched** | No shell, no inline code, no reveal, no restore |
 | Human | Standard input and standard output are both a terminal | Everything |
 | CI | A pipeline marker such as `GITHUB_ACTIONS` is set | Everything. The output filter still runs |
-| Agent | A marker such as `CLAUDECODE` is set, **or nothing matched** | No shell, no inline code, no reveal, no restore |
 
-The last row is the important one. **An unknown caller is treated as an agent.** A command
-with no terminal and no marker could be a script a developer wrote, or a tool nobody has
-heard of yet. The safe reading of an unknown caller is the one with the least power.
+The rules run in this order:
 
-Set `SECRETVEIL_CALLER=human` to override this when it is wrong. The override is trusted,
-because anything that can set an environment variable for the process can also just run the
-program itself.
+1. An AI tool marker is set. The caller is an agent.
+2. `SECRETVEIL_CALLER` is set. It gives the answer.
+3. A pipeline marker is set. The caller is CI.
+4. Standard input and standard output are both a terminal. The caller is a human.
+5. Anything else is an agent.
+
+**An unknown caller is treated as an agent.** A command with no terminal and no marker could
+be a script a developer wrote, or a tool nobody has heard of yet. The safe reading of an
+unknown caller is the one with the least power.
+
+**The marker of an AI tool comes first.** The agent writes the command line, so it can put
+`SECRETVEIL_CALLER=human` or `CI=1` in front of a command. It does not set the marker. The AI
+tool sets the marker before the agent writes anything. An earlier build trusted the override
+first and read the pipeline markers before the agent markers, and an agent used both routes
+to get a shell and a plaintext value. An AI tool that runs inside a pipeline is an agent for
+the same reason.
+
+Set `SECRETVEIL_CALLER=human` when the answer is wrong and no AI tool marker is set. When a
+marker is set, the override is ignored and the reason in the audit log says so. If you are a
+person in a terminal that an AI tool started, run the command in a terminal of your own.
+
+An agent can still remove its marker and fake a terminal. Section 2.8 describes this limit.
 
 The marker table goes out of date. It is reviewed every quarter, and the review date is in
 the source of `internal/detect`.

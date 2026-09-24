@@ -10,10 +10,17 @@ To have an agent install it for you, give it [`for-agents.md`](for-agents.md).
 
 ## Can the agent not just run `secretveil get`?
 
-No. `get --reveal` and `restore` need a human caller. secretveil looks at its environment for
-the marker of an AI tool, and refuses. The refusal goes into the audit log.
+Not by accident. `get --reveal` and `restore` need a human caller. secretveil looks at its
+environment for the marker of an AI tool, and refuses. The refusal goes into the audit log.
+The marker wins over `SECRETVEIL_CALLER=human` and over `CI=1`, so an agent cannot talk its
+way past the check with one variable.
 
 An unknown caller is read as an agent, so a tool nobody has heard of yet is refused too.
+
+This check is not a wall. An agent that removes its marker with `env -u` and fakes a terminal
+with `script` looks like a person, and no local program can tell the difference. That takes
+two deliberate steps, so it is an attack, not a habit. Section 2.8 of
+[`threat-model.md`](threat-model.md) describes it.
 
 ## Then how does the agent break this?
 

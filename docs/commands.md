@@ -253,7 +253,7 @@ Run `secretveil completion <shell> --help` for the path that your shell wants.
 
 | Name | What it is for |
 |---|---|
-| `SECRETVEIL_CALLER` | `human`, `ci` or `agent`. Overrides the detection rules. |
+| `SECRETVEIL_CALLER` | `human`, `ci` or `agent`. Overrides the detection rules, except that the marker of an AI tool always wins. |
 | `SECRETVEIL_IDENTITY` | An age identity that opens the store. For CI. |
 | `SECRETVEIL_PASSPHRASE` | A passphrase that opens the store, for a machine with no keyring. |
 | `SECRETVEIL_BINARY` | The path of the binary, for the npm package on a platform we do not build for. |

@@ -344,7 +344,8 @@ Three kinds of caller get different powers.
 script you wrote, or a tool nobody has heard of yet. The safe reading is the one with the least
 power.
 
-Set `SECRETVEIL_CALLER=human` when that is wrong. Edit `.secretveil/policy.toml` to change what an
+Set `SECRETVEIL_CALLER=human` when that is wrong. The marker of an AI tool wins over this
+variable, so an agent cannot use it to call itself a human. Edit `.secretveil/policy.toml` to change what an
 agent may run, or set `enforce = false` to turn the command rules off and keep the output filter.
 
 ## Related tools
