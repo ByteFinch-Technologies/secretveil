@@ -568,7 +568,9 @@ Error: connect failed with key <span class="v">sk-live-Q9xR2mVn7pLwT4aZ</span>
 Error: connect failed with key <span class="h">sv://api_key</span></div>
         <p class="note">The filter works across chunk boundaries, so a value split over two writes
         is still caught. It matches the encoded forms of each value as well as the value itself.
-        The forms are base64 in both alphabets, hex, the URL escape and the JSON string escape.</p>
+        The forms are base64 in both alphabets, hex, the URL escape and the JSON string escape.
+        A value on more than one line, such as a private key, is also matched as a terminal
+        prints it and one line at a time.</p>
       </div>
     </div>
   </div>

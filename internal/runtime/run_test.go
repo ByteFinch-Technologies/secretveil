@@ -297,6 +297,45 @@ func TestAPseudoTerminalRunFiltersTheOutput(t *testing.T) {
 	}
 }
 
+// TestAPseudoTerminalRemovesAMultiLineValue is the case of a private key in a
+// .env file. The terminal driver prints each "\n" of the value as "\r\n", so
+// the value itself never matches on a pseudo terminal. The child also prints
+// one body line alone, which is the key material without its armour.
+func TestAPseudoTerminalRemovesAMultiLineValue(t *testing.T) {
+	const key = "-----BEGIN FAKE KEY-----\n" +
+		"UHR5TXVsdGlMaW5lT25lLUg4dlE0bVI2dFc5eA\n" +
+		"UHR5TXVsdGlMaW5lVHdvLUIzbkw3cEs1elgyYw\n" +
+		"-----END FAKE KEY-----"
+	body := strings.Split(key, "\n")[1:3]
+
+	out := newSafeBuffer()
+	cfg := Config{
+		Args:     []string{"/bin/sh", "-c", `printf '%s\n' "$TLS_KEY"; printf '%s\n' "$TLS_KEY" | sed -n 3p`},
+		Env:      append(os.Environ(), "TLS_KEY="+key),
+		Values:   map[string]string{"tls_key": key},
+		Stdin:    strings.NewReader(""),
+		Stdout:   out,
+		Stderr:   newSafeBuffer(),
+		ForcePTY: true,
+	}
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("the runtime failed: %v", err)
+	}
+	got := out.String()
+	for _, line := range body {
+		if strings.Contains(got, line) {
+			t.Fatalf("a line of the key reached the terminal: %q", got)
+		}
+	}
+	if !strings.Contains(got, "sv://tls_key") {
+		t.Fatalf("the placeholder is missing from %q", got)
+	}
+	if !res.PTY {
+		t.Fatal("the result does not report a pseudo terminal")
+	}
+}
+
 // itoa turns a small number into text without a dependency.
 func itoa(n int) string {
 	if n == 0 {
