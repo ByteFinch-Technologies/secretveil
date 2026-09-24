@@ -203,6 +203,14 @@ func TestCallerName(t *testing.T) {
 	}
 }
 
+func TestCallerWithArticle(t *testing.T) {
+	for c, want := range map[Caller]string{Agent: "an agent", Human: "a human", CI: "a CI job", Caller(99): "an agent"} {
+		if got := c.WithArticle(); got != want {
+			t.Errorf("Caller(%d) gave %q, want %q", int(c), got, want)
+		}
+	}
+}
+
 // TestEveryMarkerFires is a table sweep. A marker that is in the list but does
 // not work is worse than no marker, because the list says it is covered.
 func TestEveryMarkerFires(t *testing.T) {

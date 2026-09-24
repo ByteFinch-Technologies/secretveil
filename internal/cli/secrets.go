@@ -60,7 +60,7 @@ reference and never the value.`,
 			refuse := func() error {
 				why := fmt.Sprintf(
 					"%s already has a value, and to replace it needs a human at a terminal. "+
-						"This caller looks like a %s, because %s", ref, who.Caller, who.Reason)
+						"This caller looks like %s, because %s", ref, who.Caller.WithArticle(), who.Reason)
 				_ = audit.New(root).Write(audit.Record{
 					Event:  audit.EventWrite,
 					Caller: who.Caller.String(),
@@ -232,8 +232,8 @@ value to the child program and keeps it out of the output.`,
 			}
 			if who.Caller != detect.Human {
 				return refuse(fmt.Sprintf(
-					"get needs a human at a terminal, and this caller looks like a %s, because %s",
-					who.Caller, who.Reason))
+					"get needs a human at a terminal, and this caller looks like %s, because %s",
+					who.Caller.WithArticle(), who.Reason))
 			}
 
 			chain, _ := openStore(root)
@@ -283,8 +283,8 @@ AI tool in its environment, is refused, and the refusal goes into the audit log.
 			who := detect.Detect()
 			if who.Caller != detect.Human {
 				why := fmt.Sprintf(
-					"rm needs a human at a terminal, and this caller looks like a %s, because %s",
-					who.Caller, who.Reason)
+					"rm needs a human at a terminal, and this caller looks like %s, because %s",
+					who.Caller.WithArticle(), who.Reason)
 				_ = log.Write(audit.Record{
 					Event:  audit.EventDelete,
 					Caller: who.Caller.String(),

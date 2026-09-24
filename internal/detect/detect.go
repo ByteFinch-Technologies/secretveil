@@ -43,6 +43,20 @@ func (c Caller) String() string {
 	}
 }
 
+// WithArticle returns the name for a sentence, with its article: "an agent",
+// "a human" or "a CI job". A message such as "looks like a %s" with String
+// printed "looks like a agent".
+func (c Caller) WithArticle() string {
+	switch c {
+	case Human:
+		return "a human"
+	case CI:
+		return "a CI job"
+	default:
+		return "an agent"
+	}
+}
+
 // EnvOverride names the variable that sets the answer by hand.
 const EnvOverride = "SECRETVEIL_CALLER"
 

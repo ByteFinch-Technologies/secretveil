@@ -515,6 +515,28 @@ func TestADryRunOfRestoreTellsAnAgentNothing(t *testing.T) {
 	}
 }
 
+// TestTheCallerIsNamedWithTheRightArticle guards the text of a refusal. The
+// messages printed "looks like a agent", because they put "a" in front of the
+// bare name.
+func TestTheCallerIsNamedWithTheRightArticle(t *testing.T) {
+	root := project(t)
+	for _, args := range [][]string{
+		{"get", "--reveal", "api_key"},
+		{"restore"},
+		{"doctor"},
+		{"rm", "api_key"},
+		{"set", "api_key"},
+	} {
+		r := sv(t, root, nil, args...)
+		if !strings.Contains(r.all(), "looks like an agent") {
+			t.Errorf("%v does not say \"looks like an agent\":\n%s", args, r.all())
+		}
+		if strings.Contains(r.all(), "a agent") {
+			t.Errorf("%v says \"a agent\":\n%s", args, r.all())
+		}
+	}
+}
+
 // TestAHumanKeepsTheUndo is the other side of case 7. restore is how a
 // developer who tries the tool and does not like it gets their project back.
 // If it stops working for a human, the product has trapped them.

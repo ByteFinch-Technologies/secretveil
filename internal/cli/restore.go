@@ -51,9 +51,9 @@ Warning: after restore, your secrets are in the clear on disk again.`,
 			if !dryRun && who.Caller != detect.Human {
 				why := fmt.Sprintf(
 					"restore puts every secret back in the clear, so it needs a human at a terminal. "+
-						"This caller looks like a %s, because %s. "+
+						"This caller looks like %s, because %s. "+
 						"Run it yourself in your own terminal, or use --dry-run to see what it would do",
-					who.Caller, who.Reason)
+					who.Caller.WithArticle(), who.Reason)
 				_ = log.Write(audit.Record{
 					Event:  audit.EventRestore,
 					Caller: who.Caller.String(),
