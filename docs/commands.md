@@ -100,7 +100,7 @@ Does three things:
 |---|---|---|
 | `--env-file` | `.env` and `.env.local` | The `.env` files to read, in load order. |
 | `--dir` | the current one | The working directory of the program. |
-| `--allow-missing` | off | Start even when the store holds no value for a handle. |
+| `--allow-missing` | off | Start even when the store holds no value for a handle. If the store does not open, `run` still starts and prints one warning that names the fault, also with `-q`. |
 | `--no-pty` | off | Use pipes, so standard output and standard error stay apart. |
 | `--pty` | off | Use a terminal even when the output is a file or a pipe. |
 | `--idle-flush` | 40ms | How long the filter waits before it releases the bytes it holds. |

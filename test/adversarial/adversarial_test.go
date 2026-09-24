@@ -711,6 +711,49 @@ func withoutAgentMarkers(env []string) []string {
 	return out
 }
 
+// TestAStoreFaultIsNamedWithAllowMissing proves issue 38. --allow-missing
+// starts the program when the key is wrong, and the developer must see the
+// fault, also with -q. Without the line the program starts with no secret
+// and the developer looks for the cause in their own code.
+func TestAStoreFaultIsNamedWithAllowMissing(t *testing.T) {
+	root := project(t)
+
+	other, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongKey := []string{"SECRETVEIL_IDENTITY=" + other.String()}
+
+	for _, quiet := range []bool{false, true} {
+		args := []string{"run", "--allow-missing"}
+		if quiet {
+			args = append(args, "-q")
+		}
+		args = append(args, "--", "cat", "package.json")
+
+		r := sv(t, root, wrongKey, args...)
+		if r.code != 0 {
+			t.Fatalf("quiet=%v: --allow-missing did not start the program, code %d:\n%s", quiet, r.code, r.all())
+		}
+		if !strings.Contains(r.stderr, "the store could not be read") {
+			t.Errorf("quiet=%v: the store fault was not named:\n%s", quiet, r.stderr)
+		}
+		if strings.Count(r.stderr, "the store could not be read") != 1 {
+			t.Errorf("quiet=%v: the fault must be one line:\n%s", quiet, r.stderr)
+		}
+		mustNotLeak(t, r, "a wrong key")
+	}
+
+	// The right key gives no warning. The line is for a fault only.
+	r := sv(t, root, nil, "run", "--allow-missing", "--", "cat", "package.json")
+	if r.code != 0 {
+		t.Fatalf("the right key did not run, code %d:\n%s", r.code, r.all())
+	}
+	if strings.Contains(r.stderr, "could not be read") {
+		t.Errorf("the right key gave a fault warning:\n%s", r.stderr)
+	}
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
