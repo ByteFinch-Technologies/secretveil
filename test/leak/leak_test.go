@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 	"github.com/ByteFinch-Technologies/secretveil/internal/redact"
 )
 
@@ -197,7 +198,7 @@ func TestCase08SecretAtBothEnds(t *testing.T) {
 // Case 9. The program printed the secret inside a base64 block. The raw value
 // never appears, so a filter that looks only for the raw value misses it.
 func TestCase09Base64EncodedSecret(t *testing.T) {
-	secret := "tr0ub4dor-horse-battery"
+	secret := fixture.Value(t, "db_password")
 	values := map[string]string{"db_password": secret}
 
 	// Three cases, one for each way the value can sit in the byte stream.

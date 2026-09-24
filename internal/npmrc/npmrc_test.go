@@ -3,9 +3,12 @@ package npmrc
 import (
 	"strings"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
-const realToken = "npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B"
+// realToken is the npm token of the test. See internal/fixture.
+func realToken(t testing.TB) string { return fixture.Value(t, "npm token") }
 
 // TestRoundTripIsExact is the contract. A file that nothing changed must come
 // back byte for byte, or restore cannot give the developer their file back.
@@ -15,7 +18,7 @@ func TestRoundTripIsExact(t *testing.T) {
 		"\n",
 		"registry=https://registry.npmjs.org/\n",
 		"registry=https://registry.npmjs.org/",
-		"//registry.npmjs.org/:_authToken=" + realToken + "\n",
+		"//registry.npmjs.org/:_authToken=" + realToken(t) + "\n",
 		"# a comment\n; another comment\n\nkey=value\n",
 		"key = value with spaces \n",
 		"key=value ; trailing comment\n",
@@ -40,7 +43,7 @@ func TestRoundTripIsExact(t *testing.T) {
 }
 
 func FuzzRoundTrip(f *testing.F) {
-	f.Add("//registry.npmjs.org/:_authToken=" + realToken + "\n")
+	f.Add("//registry.npmjs.org/:_authToken=" + realToken(f) + "\n")
 	f.Add("key=value ; comment\n")
 	f.Add("# comment\n\nkey=value\r\n")
 	f.Add("=\n=\n")
@@ -54,7 +57,7 @@ func FuzzRoundTrip(f *testing.F) {
 
 // FuzzSetRoundTrip proves a rewrite changes one value and nothing else.
 func FuzzSetRoundTrip(f *testing.F) {
-	f.Add("//registry.npmjs.org/:_authToken="+realToken+"\n", "x")
+	f.Add("//registry.npmjs.org/:_authToken="+realToken(f)+"\n", "x")
 	f.Add("a=1\nb=2\n", "z")
 	f.Fuzz(func(t *testing.T, src, value string) {
 		file := Parse([]byte(src))
@@ -97,20 +100,20 @@ func TestCredentialDetection(t *testing.T) {
 		want bool
 		why  string
 	}{
-		{"//registry.npmjs.org/:_authToken=" + realToken + "\n", true, "the ordinary npm token"},
-		{"_authToken=" + realToken + "\n", true, "a token with no registry prefix"},
+		{"//registry.npmjs.org/:_authToken=" + realToken(t) + "\n", true, "the ordinary npm token"},
+		{"_authToken=" + realToken(t) + "\n", true, "a token with no registry prefix"},
 		{"//npm.pkg.github.com/:_authToken=ghp_aaaaaaaaaaaaaaaaaaaa\n", true, "another registry"},
 		{"//r.example.com/:_auth=YWJjOmRlZg==\n", true, "basic auth"},
 		{"//r.example.com/:_password=cGFzcw==\n", true, "a password"},
-		{"//REGISTRY.example.com/:_AUTHTOKEN=" + realToken + "\n", true, "the key is matched without case"},
+		{"//REGISTRY.example.com/:_AUTHTOKEN=" + realToken(t) + "\n", true, "the key is matched without case"},
 
 		{"registry=https://registry.npmjs.org/\n", false, "a registry is not a credential"},
 		{"save-exact=true\n", false, "an ordinary setting"},
 		{"email=bob@example.com\n", false, "an email address is not a credential"},
 		{"//r.example.com/:_authToken=${NPM_TOKEN}\n", false, "the project already uses a variable"},
 		{"//r.example.com/:_authToken=" + Marker(Ref("//r.example.com/:_authToken")) + "\n", false, "already rewritten"},
-		{"# //r.example.com/:_authToken=" + realToken + "\n", false, "a comment"},
-		{"; //r.example.com/:_authToken=" + realToken + "\n", false, "a comment with a semicolon"},
+		{"# //r.example.com/:_authToken=" + realToken(t) + "\n", false, "a comment"},
+		{"; //r.example.com/:_authToken=" + realToken(t) + "\n", false, "a comment with a semicolon"},
 		{"//r.example.com/:_authToken=\n", false, "an empty value"},
 		{"//r.example.com/:_authToken=\"quoted token\"\n", false, "the two readers disagree on a quoted value"},
 	}
@@ -125,7 +128,7 @@ func TestCredentialDetection(t *testing.T) {
 // TestRewriteProducesTheMarker walks the whole path a migration takes.
 func TestRewriteProducesTheMarker(t *testing.T) {
 	src := "registry=https://registry.npmjs.org/\n" +
-		"//registry.npmjs.org/:_authToken=" + realToken + "\n" +
+		"//registry.npmjs.org/:_authToken=" + realToken(t) + "\n" +
 		"save-exact=true\n"
 
 	file := Parse([]byte(src))
@@ -142,7 +145,7 @@ func TestRewriteProducesTheMarker(t *testing.T) {
 	}
 
 	out := string(file.Bytes())
-	if strings.Contains(out, realToken) {
+	if strings.Contains(out, realToken(t)) {
 		t.Fatal("the token is still in the file")
 	}
 	want := "registry=https://registry.npmjs.org/\n" +
@@ -160,7 +163,7 @@ func TestRewriteProducesTheMarker(t *testing.T) {
 
 // TestRestoreGivesBackTheOriginalBytes is the release gate, in one package.
 func TestRestoreGivesBackTheOriginalBytes(t *testing.T) {
-	src := "//registry.npmjs.org/:_authToken=" + realToken + "\nsave-exact=true\n"
+	src := "//registry.npmjs.org/:_authToken=" + realToken(t) + "\nsave-exact=true\n"
 
 	file := Parse([]byte(src))
 	key := file.Credentials()[0].Key
@@ -169,14 +172,14 @@ func TestRestoreGivesBackTheOriginalBytes(t *testing.T) {
 	veiled := file.Bytes()
 
 	back := Parse(veiled)
-	back.Set(key, realToken)
+	back.Set(key, realToken(t))
 	if got := string(back.Bytes()); got != src {
 		t.Fatalf("restore did not give back the original bytes\n  got:  %q\n  want: %q", got, src)
 	}
 }
 
 func TestSetRefusesAValueTheReadersDisagreeOn(t *testing.T) {
-	file := Parse([]byte("//r.example.com/:_authToken=" + realToken + "\n"))
+	file := Parse([]byte("//r.example.com/:_authToken=" + realToken(t) + "\n"))
 	key := file.Credentials()[0].Key
 	for _, bad := range []string{"has space", `has"quote`, "has'quote", "has#hash", "has;semi", ""} {
 		if file.Set(key, bad) {
@@ -220,7 +223,7 @@ func TestRefFromVarRejectsAForeignName(t *testing.T) {
 }
 
 func TestTwoRegistriesGetTwoReferences(t *testing.T) {
-	src := "//registry.npmjs.org/:_authToken=" + realToken + "\n" +
+	src := "//registry.npmjs.org/:_authToken=" + realToken(t) + "\n" +
 		"//npm.pkg.github.com/:_authToken=ghp_aaaaaaaaaaaaaaaaaaaa\n"
 	file := Parse([]byte(src))
 	creds := file.Credentials()

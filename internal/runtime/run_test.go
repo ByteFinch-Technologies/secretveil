@@ -9,11 +9,9 @@ import (
 	"sync"
 	"testing"
 	"time"
-)
 
-// The secret in these tests is long enough that the filter does not skip it,
-// and it is not a real credential.
-const testSecret = "sk-live-abcdef0123456789"
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
+)
 
 // safeBuffer is a buffer that more than one goroutine can write to. The idle
 // timer and the child both write while the test reads.
@@ -65,7 +63,7 @@ func runSh(t *testing.T, script string, cfg Config) (*Result, string, string) {
 func TestTheChildSeesTheResolvedValue(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, ".env", "API_KEY=sv://api_key\n")
-	st := memStore(t, map[string]string{"api_key": testSecret})
+	st := memStore(t, map[string]string{"api_key": fixture.Value(t, "stored")})
 
 	got, err := Resolve(context.Background(), st, Options{Dir: dir, Parent: []string{}})
 	if err != nil {
@@ -84,17 +82,17 @@ func TestTheChildSeesTheResolvedValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != testSecret {
+	if string(body) != fixture.Value(t, "stored") {
 		t.Fatalf("the child received %q", string(body))
 	}
 }
 
 func TestTheSecretDoesNotReachStdout(t *testing.T) {
 	res, out, _ := runSh(t, `echo "the key is $API_KEY today"`, Config{
-		Env:    append(os.Environ(), "API_KEY="+testSecret),
-		Values: map[string]string{"api_key": testSecret},
+		Env:    append(os.Environ(), "API_KEY="+fixture.Value(t, "stored")),
+		Values: map[string]string{"api_key": fixture.Value(t, "stored")},
 	})
-	if strings.Contains(out, testSecret) {
+	if strings.Contains(out, fixture.Value(t, "stored")) {
 		t.Fatalf("the secret reached the output: %q", out)
 	}
 	if !strings.Contains(out, "sv://api_key") {
@@ -110,10 +108,10 @@ func TestTheSecretDoesNotReachStdout(t *testing.T) {
 
 func TestTheSecretDoesNotReachStderr(t *testing.T) {
 	_, _, errOut := runSh(t, `echo "failed with $API_KEY" >&2`, Config{
-		Env:    append(os.Environ(), "API_KEY="+testSecret),
-		Values: map[string]string{"api_key": testSecret},
+		Env:    append(os.Environ(), "API_KEY="+fixture.Value(t, "stored")),
+		Values: map[string]string{"api_key": fixture.Value(t, "stored")},
 	})
-	if strings.Contains(errOut, testSecret) {
+	if strings.Contains(errOut, fixture.Value(t, "stored")) {
 		t.Fatalf("the secret reached the error stream: %q", errOut)
 	}
 	if !strings.Contains(errOut, "sv://api_key") {
@@ -123,8 +121,8 @@ func TestTheSecretDoesNotReachStderr(t *testing.T) {
 
 func TestABase64FormOfTheSecretIsAlsoRemoved(t *testing.T) {
 	_, out, _ := runSh(t, `printf 'Authorization: Basic %s\n' "$(printf %s "$API_KEY" | base64)"`, Config{
-		Env:    append(os.Environ(), "API_KEY="+testSecret),
-		Values: map[string]string{"api_key": testSecret},
+		Env:    append(os.Environ(), "API_KEY="+fixture.Value(t, "stored")),
+		Values: map[string]string{"api_key": fixture.Value(t, "stored")},
 	})
 	if strings.Contains(out, "c2stbGl2ZS1hYmNkZWYwMTIzNDU2Nzg5") {
 		t.Fatalf("the encoded secret reached the output: %q", out)
@@ -190,7 +188,7 @@ func TestAPromptWithoutANewlineStillArrives(t *testing.T) {
 		_, _ = Run(context.Background(), Config{
 			Args:      []string{"/bin/sh", "-c", `printf 'Password: '; sleep 2`},
 			Env:       os.Environ(),
-			Values:    map[string]string{"api_key": testSecret},
+			Values:    map[string]string{"api_key": fixture.Value(t, "stored")},
 			Stdin:     strings.NewReader(""),
 			Stdout:    out,
 			Stderr:    newSafeBuffer(),
@@ -213,7 +211,7 @@ func TestAPromptWithoutANewlineStillArrives(t *testing.T) {
 func TestAPartialSecretIsStillHeldBack(t *testing.T) {
 	// The child prints the first half of the secret and waits. The idle timer
 	// must not release it, because the second half can still arrive.
-	half := testSecret[:len(testSecret)/2]
+	half := fixture.Value(t, "stored")[:len(fixture.Value(t, "stored"))/2]
 	out := newSafeBuffer()
 	done := make(chan struct{})
 	go func() {
@@ -221,7 +219,7 @@ func TestAPartialSecretIsStillHeldBack(t *testing.T) {
 		_, _ = Run(context.Background(), Config{
 			Args:      []string{"/bin/sh", "-c", `printf 'start ' ; printf %s "$HALF"; sleep 1`},
 			Env:       append(os.Environ(), "HALF="+half),
-			Values:    map[string]string{"api_key": testSecret},
+			Values:    map[string]string{"api_key": fixture.Value(t, "stored")},
 			Stdin:     strings.NewReader(""),
 			Stdout:    out,
 			Stderr:    newSafeBuffer(),
@@ -268,8 +266,8 @@ func TestAPseudoTerminalRunFiltersTheOutput(t *testing.T) {
 	out := newSafeBuffer()
 	cfg := Config{
 		Args:     []string{"/bin/sh", "-c", `echo "the key is $API_KEY"; test -t 1 && echo TTY`},
-		Env:      append(os.Environ(), "API_KEY="+testSecret),
-		Values:   map[string]string{"api_key": testSecret},
+		Env:      append(os.Environ(), "API_KEY="+fixture.Value(t, "stored")),
+		Values:   map[string]string{"api_key": fixture.Value(t, "stored")},
 		Stdin:    strings.NewReader(""),
 		Stdout:   out,
 		Stderr:   newSafeBuffer(),
@@ -280,7 +278,7 @@ func TestAPseudoTerminalRunFiltersTheOutput(t *testing.T) {
 		t.Fatalf("the runtime failed: %v", err)
 	}
 	got := out.String()
-	if strings.Contains(got, testSecret) {
+	if strings.Contains(got, fixture.Value(t, "stored")) {
 		t.Fatalf("the secret reached the terminal: %q", got)
 	}
 	if !strings.Contains(got, "sv://api_key") {
@@ -345,7 +343,7 @@ func TestAPseudoTerminalRunGetsTheEndOfAPipedInput(t *testing.T) {
 	cfg := Config{
 		Args:     []string{"/bin/sh", "-c", `cat; echo "input ended"; test -t 1 && echo TTY`},
 		Env:      os.Environ(),
-		Values:   map[string]string{"api_key": testSecret},
+		Values:   map[string]string{"api_key": fixture.Value(t, "stored")},
 		Stdin:    strings.NewReader("one line of input\n"),
 		Stdout:   out,
 		Stderr:   newSafeBuffer(),
@@ -464,7 +462,7 @@ func TestAPseudoTerminalKeepsTheLastLine(t *testing.T) {
 		Args: []string{"/bin/sh", "-c",
 			`i=1; while [ $i -le ` + itoa(lines) + ` ]; do echo "line $i of a program that stops"; i=$((i+1)); done`},
 		Env:      os.Environ(),
-		Values:   map[string]string{"api_key": testSecret},
+		Values:   map[string]string{"api_key": fixture.Value(t, "stored")},
 		Stdin:    strings.NewReader(""),
 		Stdout:   out,
 		Stderr:   newSafeBuffer(),

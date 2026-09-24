@@ -139,7 +139,7 @@ const hidden = "[hidden]"
 // written down.
 //
 // A command line is not safe to log. A developer types
-// "curl -H 'Authorization: Bearer sk-live-...'" and the value is now in the
+// "curl -H 'Authorization: Bearer $TOKEN'" and the value is now in the
 // log. This is a guess and not a proof, so it is deliberately wide. Four
 // shapes go: a word that follows a flag whose name sounds like a credential,
 // the credential inside a URL, a word whose own shape reads as random, and any
@@ -182,7 +182,7 @@ func redactWith(args []string, never []string) []string {
 //
 // A whole argument is not the unit that matters. A developer writes
 //
-//	curl -H "Authorization: Bearer sk-live-..."
+//	curl -H "Authorization: Bearer $TOKEN"
 //
 // and the credential is one word in the middle of an argument that holds
 // spaces. A test on the whole argument sees the spaces and lets it through, so

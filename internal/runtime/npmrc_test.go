@@ -5,9 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
-const npmToken = "npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B"
+// npmToken is the npm token of the test. See internal/fixture.
+func npmToken(t testing.TB) string { return fixture.Value(t, "npm token") }
 
 // TestTheNpmrcMarkerBecomesAVariable is the run half of the .npmrc work. npm
 // expands the marker itself, so all this program has to do is put the value in
@@ -16,18 +19,18 @@ func TestTheNpmrcMarkerBecomesAVariable(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, ".npmrc", "registry=https://registry.npmjs.org/\n"+
 		"//registry.npmjs.org/:_authToken=${SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN}\n")
-	st := memStore(t, map[string]string{"npmrc_registry_npmjs_org_authtoken": npmToken})
+	st := memStore(t, map[string]string{"npmrc_registry_npmjs_org_authtoken": npmToken(t)})
 
 	res, err := Resolve(context.Background(), st, Options{Dir: dir, Parent: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := value(res.Env, "SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN"); got != npmToken {
+	if got, _ := value(res.Env, "SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN"); got != npmToken(t) {
 		t.Fatalf("the variable is %q", got)
 	}
 	// The filter needs the value, or the token reaches the screen the first
 	// time npm prints it back.
-	if res.Values["npmrc_registry_npmjs_org_authtoken"] != npmToken {
+	if res.Values["npmrc_registry_npmjs_org_authtoken"] != npmToken(t) {
 		t.Fatal("the value for the filter is missing")
 	}
 	if res.Handles != 1 {
@@ -45,13 +48,13 @@ func TestAnNpmrcInAWorkspaceIsRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, sub, ".npmrc", "//registry.npmjs.org/:_authToken=${SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN}\n")
-	st := memStore(t, map[string]string{"npmrc_registry_npmjs_org_authtoken": npmToken})
+	st := memStore(t, map[string]string{"npmrc_registry_npmjs_org_authtoken": npmToken(t)})
 
 	res, err := Resolve(context.Background(), st, Options{Dir: dir, Parent: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := value(res.Env, "SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN"); got != npmToken {
+	if got, _ := value(res.Env, "SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN"); got != npmToken(t) {
 		t.Fatalf("the variable is %q", got)
 	}
 }
@@ -61,7 +64,7 @@ func TestAnNpmrcInAWorkspaceIsRead(t *testing.T) {
 func TestTheEnvironmentBeatsTheNpmrcMarker(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, ".npmrc", "//registry.npmjs.org/:_authToken=${SV_NPMRC_REGISTRY_NPMJS_ORG_AUTHTOKEN}\n")
-	st := memStore(t, map[string]string{"npmrc_registry_npmjs_org_authtoken": npmToken})
+	st := memStore(t, map[string]string{"npmrc_registry_npmjs_org_authtoken": npmToken(t)})
 
 	res, err := Resolve(context.Background(), st, Options{
 		Dir:    dir,

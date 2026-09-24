@@ -4,7 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
+
+// npmToken is the npm token of the test. See internal/fixture.
+func npmToken(t testing.TB) string { return fixture.Value(t, "npm token") }
 
 // write puts a file in a directory and makes the parent directories.
 func write(t *testing.T, root, name, body string) string {
@@ -33,7 +38,7 @@ func scan(t *testing.T, root string) []Finding {
 func TestNpmrcTokenIsFound(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, ".npmrc", "registry=https://registry.npmjs.org/\n"+
-		"//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n")
+		"//registry.npmjs.org/:_authToken="+npmToken(t)+"\n")
 
 	found := scan(t, root)
 	if len(found) != 1 {
@@ -79,7 +84,7 @@ func TestEveryKindFires(t *testing.T) {
 		kind string
 	}{
 		{".netrc", "machine api.example.com login bob password s3cr3t-value-x9\n", ".netrc"},
-		{".yarnrc.yml", "npmAuthToken: npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n", ".yarnrc.yml"},
+		{".yarnrc.yml", "npmAuthToken: " + npmToken(t) + "\n", ".yarnrc.yml"},
 		{".pypirc", "[pypi]\nusername = bob\npassword = pypi-AgEIcHlwaS5vcmc\n", ".pypirc"},
 		{".pgpass", "db.example.com:5432:app:appuser:s3cr3t-p4ssw0rd\n", ".pgpass"},
 		{".git-credentials", "https://bob:ghp_aaaaaaaaaaaaaaaaaaaa@github.com\n", ".git-credentials"},
@@ -166,7 +171,7 @@ func TestPlainConfigJSONIsIgnored(t *testing.T) {
 func TestSkipDirIsObeyed(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "node_modules/pkg/.npmrc",
-		"//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n")
+		"//registry.npmjs.org/:_authToken="+npmToken(t)+"\n")
 
 	skip := func(name string) bool { return name == "node_modules" }
 	found, err := Scan(root, skip, nil)
@@ -183,7 +188,7 @@ func TestSkipDirIsObeyed(t *testing.T) {
 func TestCoveredLineIsNotReported(t *testing.T) {
 	root := t.TempDir()
 	path := write(t, root, ".npmrc",
-		"//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n")
+		"//registry.npmjs.org/:_authToken="+npmToken(t)+"\n")
 
 	covered := func(p string, line int) bool { return p == path && line == 1 }
 	found, err := Scan(root, nil, covered)
@@ -201,8 +206,8 @@ func TestCoveredLineIsNotReported(t *testing.T) {
 func TestUncoveredLineSurvivesACoveredOne(t *testing.T) {
 	root := t.TempDir()
 	path := write(t, root, ".npmrc",
-		"//a.example.com/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n"+
-			"//b.example.com/:_authToken=npm_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf\n")
+		"//a.example.com/:_authToken="+npmToken(t)+"\n"+
+			"//b.example.com/:_authToken="+fixture.Value(t, "uncovered")+"\n")
 
 	covered := func(p string, line int) bool { return p == path && line == 1 }
 	found, err := Scan(root, nil, covered)
@@ -219,7 +224,7 @@ func TestUncoveredLineSurvivesACoveredOne(t *testing.T) {
 func TestSymlinkIsNotFollowed(t *testing.T) {
 	outside := t.TempDir()
 	real := write(t, outside, "real",
-		"//registry.npmjs.org/:_authToken=npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B\n")
+		"//registry.npmjs.org/:_authToken="+npmToken(t)+"\n")
 
 	root := t.TempDir()
 	if err := os.Symlink(real, filepath.Join(root, ".npmrc")); err != nil {
@@ -239,7 +244,7 @@ func TestBinaryFileIsIgnored(t *testing.T) {
 }
 
 func TestNoValueLeaksIntoTheReport(t *testing.T) {
-	const token = "npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B"
+	token := npmToken(t)
 	root := t.TempDir()
 	write(t, root, ".npmrc", "//registry.npmjs.org/:_authToken="+token+"\n")
 

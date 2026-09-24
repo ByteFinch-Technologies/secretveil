@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
 // TestAFileOutsideTheDefaultOrderIsNamed is the whole point of Unread. A
@@ -126,8 +128,8 @@ func TestTheNamedFilesAreActuallyRead(t *testing.T) {
 	write(t, dir, ".env", "API_KEY=sv://api_key\n")
 	write(t, dir, ".env.development", "STRIPE_DEV_KEY=sv://stripe_dev_key\n")
 	st := memStore(t, map[string]string{
-		"api_key":        "sk-live-Q9xR2mVn7pLwT4aZ",
-		"stripe_dev_key": "sk-dev-M4nB7vC2xZ9qW5eRt7Y",
+		"api_key":        fixture.Value(t, "stored"),
+		"stripe_dev_key": fixture.Value(t, "development"),
 	})
 
 	extra, err := Unread(dir)
@@ -142,7 +144,7 @@ func TestTheNamedFilesAreActuallyRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := value(res.Env, "STRIPE_DEV_KEY"); got != "sk-dev-M4nB7vC2xZ9qW5eRt7Y" {
+	if got, _ := value(res.Env, "STRIPE_DEV_KEY"); got != fixture.Value(t, "development") {
 		t.Fatalf("the advised command did not resolve the handle, the value is %q", got)
 	}
 }
@@ -155,8 +157,8 @@ func TestTheDefaultOrderLeavesTheHandleUnresolved(t *testing.T) {
 	write(t, dir, ".env", "API_KEY=sv://api_key\n")
 	write(t, dir, ".env.development", "STRIPE_DEV_KEY=sv://stripe_dev_key\n")
 	st := memStore(t, map[string]string{
-		"api_key":        "sk-live-Q9xR2mVn7pLwT4aZ",
-		"stripe_dev_key": "sk-dev-M4nB7vC2xZ9qW5eRt7Y",
+		"api_key":        fixture.Value(t, "stored"),
+		"stripe_dev_key": fixture.Value(t, "development"),
 	})
 
 	res, err := Resolve(t.Context(), st, Options{Dir: dir, Parent: []string{}})

@@ -13,6 +13,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 	"github.com/ByteFinch-Technologies/secretveil/internal/store"
 	"github.com/ByteFinch-Technologies/secretveil/internal/store/keyring"
 )
@@ -83,7 +84,7 @@ func TestValueSurvivesAProcessRestart(t *testing.T) {
 func TestTheFileHoldsNoPlaintext(t *testing.T) {
 	ctx := context.Background()
 	s, _, path := newTestStore(t)
-	const secret = "tr0ub4dor-horse-battery"
+	secret := fixture.Value(t, "db_password")
 	if err := s.Set(ctx, "db_password", secret); err != nil {
 		t.Fatal(err)
 	}
@@ -374,14 +375,15 @@ func TestTheDirectorySyncReportsItsFault(t *testing.T) {
 func TestAWriteReachesTheDiskDirectory(t *testing.T) {
 	ctx := context.Background()
 	s, _, _ := newTestStore(t)
-	if err := s.Set(ctx, "api_key", "Zx91qLbT4vNs7Kd2FhWm0PjR"); err != nil {
+	want := fixture.Value(t, "stored")
+	if err := s.Set(ctx, "api_key", want); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Get(ctx, "api_key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Zx91qLbT4vNs7Kd2FhWm0PjR" {
+	if got != want {
 		t.Errorf("the value is %q", got)
 	}
 }
@@ -396,7 +398,7 @@ func TestAWriteReachesTheDiskDirectory(t *testing.T) {
 func TestASecondWriterDoesNotLoseTheFirstValue(t *testing.T) {
 	ctx := context.Background()
 	first, ring, path := newTestStore(t)
-	if err := first.Set(ctx, "start", "Zx91qLbT4vNs7Kd2FhWm0PjR"); err != nil {
+	if err := first.Set(ctx, "start", fixture.Value(t, "start")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -407,10 +409,10 @@ func TestASecondWriterDoesNotLoseTheFirstValue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := first.Set(ctx, "from_first", "Ge72uPdA8wFn3Jm5RcVt6Byq"); err != nil {
+	if err := first.Set(ctx, "from_first", fixture.Value(t, "first writer")); err != nil {
 		t.Fatal(err)
 	}
-	if err := second.Set(ctx, "from_second", "Kp38sHnE5vLq7Wm2XbTy9Cdr"); err != nil {
+	if err := second.Set(ctx, "from_second", fixture.Value(t, "second writer")); err != nil {
 		t.Fatal(err)
 	}
 

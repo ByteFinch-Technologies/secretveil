@@ -5,9 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ByteFinch-Technologies/secretveil/internal/fixture"
 )
 
-const npmToken = "npm_A9fK2xQw7ZtR4mVn8sLp3JhG1dYc5B"
+// npmToken is the npm token of the test. See internal/fixture.
+func npmToken(t testing.TB) string { return fixture.Value(t, "npm token") }
+
 const otherToken = "ghp_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf"
 
 // TestTheTokenLeavesTheNpmrcAndTheSettingsStay is the whole point of the
@@ -15,9 +19,9 @@ const otherToken = "ghp_Zq3Wr8Tv1Nb6Mx4Kd7Ls9Gh2Jc5Pf"
 // every setting npm needs is still readable.
 func TestTheTokenLeavesTheNpmrcAndTheSettingsStay(t *testing.T) {
 	root := project(t, map[string]string{
-		".env": "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
+		".env": "API_KEY=" + fixture.Value(t, "stored") + "\n",
 		".npmrc": "registry=https://registry.npmjs.org/\n" +
-			"//registry.npmjs.org/:_authToken=" + npmToken + "\n" +
+			"//registry.npmjs.org/:_authToken=" + npmToken(t) + "\n" +
 			"save-exact=true\n",
 	})
 	st := newFakeStore()
@@ -27,7 +31,7 @@ func TestTheTokenLeavesTheNpmrcAndTheSettingsStay(t *testing.T) {
 	}
 	out := read(t, filepath.Join(root, ".npmrc"))
 
-	if strings.Contains(out, npmToken) {
+	if strings.Contains(out, npmToken(t)) {
 		t.Fatalf("the token is still in the file:\n%s", out)
 	}
 	want := "registry=https://registry.npmjs.org/\n" +
@@ -36,7 +40,7 @@ func TestTheTokenLeavesTheNpmrcAndTheSettingsStay(t *testing.T) {
 	if out != want {
 		t.Fatalf("the file is wrong\n got: %q\nwant: %q", out, want)
 	}
-	if st.values["npmrc_registry_npmjs_org_authtoken"] != npmToken {
+	if st.values["npmrc_registry_npmjs_org_authtoken"] != npmToken(t) {
 		t.Fatalf("the store does not hold the token: %v", st.values)
 	}
 }
@@ -46,8 +50,8 @@ func TestTheTokenLeavesTheNpmrcAndTheSettingsStay(t *testing.T) {
 // change what npm reads.
 func TestTheNpmrcGetsNoShapeComment(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":   "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		".npmrc": "//registry.npmjs.org/:_authToken=" + npmToken + "\n",
+		".env":   "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		".npmrc": "//registry.npmjs.org/:_authToken=" + npmToken(t) + "\n",
 	})
 	if _, err := Apply(context.Background(), newFakeStore(), Options{Root: root}); err != nil {
 		t.Fatal(err)
@@ -62,8 +66,8 @@ func TestTheNpmrcGetsNoShapeComment(t *testing.T) {
 // never go into the store as if it were the token.
 func TestASecondMigrationLeavesTheNpmrcAlone(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":   "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		".npmrc": "//registry.npmjs.org/:_authToken=" + npmToken + "\n",
+		".env":   "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		".npmrc": "//registry.npmjs.org/:_authToken=" + npmToken(t) + "\n",
 	})
 	st := newFakeStore()
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err != nil {
@@ -78,7 +82,7 @@ func TestASecondMigrationLeavesTheNpmrcAlone(t *testing.T) {
 	if second := read(t, filepath.Join(root, ".npmrc")); second != first {
 		t.Fatalf("the second run changed the file\n got: %q\nwant: %q", second, first)
 	}
-	if got := st.values["npmrc_registry_npmjs_org_authtoken"]; got != npmToken {
+	if got := st.values["npmrc_registry_npmjs_org_authtoken"]; got != npmToken(t) {
 		t.Fatalf("the second run put %q in the store", got)
 	}
 }
@@ -91,8 +95,8 @@ func TestASecondMigrationLeavesTheNpmrcAlone(t *testing.T) {
 // result was a file that npm could not use and that restore walked past.
 func TestARenamedNpmrcReferenceKeepsItsPrefix(t *testing.T) {
 	root := project(t, map[string]string{
-		".env":                "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
-		"packages/api/.npmrc": "//registry.npmjs.org/:_authToken=" + npmToken + "\n",
+		".env":                "API_KEY=" + fixture.Value(t, "stored") + "\n",
+		"packages/api/.npmrc": "//registry.npmjs.org/:_authToken=" + npmToken(t) + "\n",
 		"packages/web/.npmrc": "//registry.npmjs.org/:_authToken=" + otherToken + "\n",
 	})
 	st := newFakeStore()
@@ -126,9 +130,9 @@ func TestARenamedNpmrcReferenceKeepsItsPrefix(t *testing.T) {
 // agree on what a quoted value means, so the line is not rewritten at all. A
 // wrong guess here would put the wrong bytes in the store or in the file.
 func TestAQuotedTokenIsLeftAlone(t *testing.T) {
-	body := "//registry.npmjs.org/:_authToken=\"" + npmToken + "\"\n"
+	body := "//registry.npmjs.org/:_authToken=\"" + npmToken(t) + "\"\n"
 	root := project(t, map[string]string{
-		".env":   "API_KEY=sk-live-Q9xR2mVn7pLwT4aZ\n",
+		".env":   "API_KEY=" + fixture.Value(t, "stored") + "\n",
 		".npmrc": body,
 	})
 	if _, err := Apply(context.Background(), newFakeStore(), Options{Root: root}); err != nil {
@@ -143,13 +147,13 @@ func TestAQuotedTokenIsLeftAlone(t *testing.T) {
 // depend on a .env file being there.
 func TestAProjectWithOnlyAnNpmrcStillMigrates(t *testing.T) {
 	root := project(t, map[string]string{
-		".npmrc": "//registry.npmjs.org/:_authToken=" + npmToken + "\n",
+		".npmrc": "//registry.npmjs.org/:_authToken=" + npmToken(t) + "\n",
 	})
 	st := newFakeStore()
 	if _, err := Apply(context.Background(), st, Options{Root: root}); err != nil {
 		t.Fatal(err)
 	}
-	if st.values["npmrc_registry_npmjs_org_authtoken"] != npmToken {
+	if st.values["npmrc_registry_npmjs_org_authtoken"] != npmToken(t) {
 		t.Fatalf("the store does not hold the token: %v", st.values)
 	}
 }
