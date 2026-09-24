@@ -123,6 +123,14 @@ secret that leaks into a stack trace or a debug log never reaches the screen.`,
 			}
 
 			errOut := cmd.ErrOrStderr()
+			// --allow-missing lets the program start, but a store that does
+			// not open is a fault and not a missing value. Without this line
+			// the program starts with no secret at all and nothing says why.
+			// The line prints also with -q, because a fault is not noise.
+			if res.Err != nil {
+				fmt.Fprintf(errOut, "secretveil: warning: the store could not be read, so no handle was resolved: %v. "+
+					"Run \"secretveil doctor\" to check the key\n", res.Err)
+			}
 			if !quiet {
 				report(errOut, start, res)
 				warnUnread(errOut, start, res.Files)
