@@ -214,12 +214,6 @@ func TestProgramsThatRunShellText(t *testing.T) {
 // one takes the command as its own arguments, or as one string.
 func TestARunnerDoesNotHideTheProgram(t *testing.T) {
 	for _, args := range [][]string{
-		{"parallel", "printenv", ":::", "a"},
-		{"parallel", "printenv {}", ":::", "a"},
-		{"tmux", "new", "printenv"},
-		{"tmux", "new-session", "-d", "sh -c printenv"},
-		{"screen", "-dm", "printenv"},
-		{"hyperfine", "printenv"},
 		{"cross-env", "A=1", "printenv"},
 		{"dotenv", "--", "printenv"},
 		{"direnv", "exec", ".", "printenv"},
@@ -235,7 +229,6 @@ func TestARunnerDoesNotHideTheProgram(t *testing.T) {
 		{"rye", "run", "printenv"},
 		{"bundle", "exec", "printenv"},
 		{"bundle", "exec", "ruby", "-e", "1"},
-		{"nice", "tmux", "new", "sh -c printenv"},
 	} {
 		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {
 			if allowed(t, args...) {
@@ -251,8 +244,11 @@ func TestARunnerDoesNotHideTheProgram(t *testing.T) {
 		{"bundle", "exec", "rspec"},
 		{"direnv", "allow"},
 		{"mise", "install", "node"},
-		{"hyperfine", "npm test"},
-		{"tmux", "ls"},
+		{"npx", "eslint", "src/**/*.ts"},
+		{"npm", "exec", "--", "vitest", "run"},
+		{"npm", "run", "lint", "--", "--fix;x"},
+		{"nice", "-n", "5", "make", "a;b"},
+		{"uv", "run", "pytest", "-k", "not (slow)"},
 	} {
 		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
 			if !allowed(t, args...) {
@@ -694,4 +690,189 @@ func quoted(names []string) string {
 		out[i] = `"` + n + `"`
 	}
 	return strings.Join(out, ", ")
+}
+
+// TestAShellRunnerIsRefused covers issue 78. tmux, screen, parallel and
+// hyperfine run a command string through a shell, and a tmux or screen
+// session with no command is a shell that keeps the environment after "run"
+// stops. The rules read only the first word of a string, so these programs
+// are in the deny list and not in the wrapper table.
+func TestAShellRunnerIsRefused(t *testing.T) {
+	for _, args := range [][]string{
+		{"tmux", "new-session", "-d"},
+		{"tmux", "new", "-d", "true; bash -c 'env > /tmp/x'"},
+		{"tmux", "new", "-d", "X=1 bash -c env"},
+		{"tmux", "new", "-d", "(bash -c env)"},
+		{"tmux", "send-keys", "-t", "0", "env > /tmp/x", "Enter"},
+		{"tmux", "ls"},
+		{"screen", "-dm"},
+		{"screen", "-dm", "true; bash"},
+		{"parallel"},
+		{"parallel", "true; env", ":::", "a"},
+		{"parallel", "printenv", ":::", "a"},
+		{"hyperfine", "true; env"},
+		{"hyperfine", "npm test"},
+		{"cross-env-shell", "A=1", "true"},
+		{"nice", "tmux", "new", "-d"},
+		{"timeout", "5", "screen", "-dm"},
+		{"/usr/bin/tmux", "new", "-d"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%v was allowed, and it gives the agent a shell", args)
+			}
+		})
+	}
+}
+
+// TestShellTextThroughARunnerIsRefused covers the runners that give their
+// words to a shell. "npx 'true; bash'" starts bash, and the first word of the
+// string is "true;", which is no program the rules know.
+func TestShellTextThroughARunnerIsRefused(t *testing.T) {
+	for _, args := range [][]string{
+		{"npx", "true; bash"},
+		{"npx", "true;bash"},
+		{"npx", "X=1 bash"},
+		{"npx", "(bash)"},
+		{"npx", "b''ash"},
+		{"npx", "$(printf bash)"},
+		{"npx", "`echo bash`"},
+		{"npx", `true\nbash`},
+		{"npx", "true\nbash"},
+		{"npm", "exec", "--", "true; bash"},
+		{"npm", "x", "true && bash"},
+		{"pnpm", "exec", "true || bash"},
+		{"pnpm", "dlx", "a>b"},
+		{"yarn", "exec", "true; bash"},
+		{"bundle", "exec", "true; bash"},
+		{"conda", "run", "-n", "base", "true; bash"},
+		{"nice", "npx", "true; bash"},
+		// The review of issue 78 found these. A glob or a space in the
+		// first word lets the shell choose the program.
+		{"npx", "--yes", "-p", ".", "--", "eval /bin/s?"},
+		{"npx", "/bin/ba?h"},
+		{"npx", "/bin/b[a]sh"},
+		{"npx", "{bash,x}"},
+		{"npx", ". /dev/stdin"},
+		{"npx", ".", "/dev/stdin"},
+		{"npx", "source", "/dev/stdin"},
+		{"npx", "eval", "bash"},
+		{"npx", "trap", "bash", "EXIT"},
+		{"npm", "exec", "--", "eval bash"},
+		{"npm", "exec", "--", "eval", "bash"},
+		{"npx", "--foo", ".", "/dev/stdin"},
+		{"pixi", "run", "true; bash"},
+		{"bundle", "exec", "/bin/ba?h"},
+		{"conda", "run", "-n", "base", "/bin/ba?h"},
+		{"pixi", "run", "eval", "x"},
+		{"concurrently", "npm:dev", "bash"},
+		{"mise", "exec", "-c", "env"},
+		{"mise", "x", "--command=env"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%v was allowed, and the runner gives shell text to a shell", args)
+			}
+		})
+	}
+}
+
+// TestAShellTextRefusalHoldsNoWord keeps the text that the agent wrote out of
+// the refusal, because the refusal goes to the audit log.
+func TestAShellTextRefusalHoldsNoWord(t *testing.T) {
+	err := Default().Check([]string{"npx", "true; bash --norc"})
+	if err == nil {
+		t.Fatal("the command was allowed")
+	}
+	if strings.Contains(err.Error(), "norc") {
+		t.Errorf("the refusal holds the word of the agent: %v", err)
+	}
+	if !strings.Contains(err.Error(), `";"`) {
+		t.Errorf("the refusal does not name the shell character: %v", err)
+	}
+}
+
+// TestARunnerWithNoCommandIsRefused covers a runner that starts a shell when
+// no command follows it. The shell reads its commands from standard input, and
+// the rules cannot read a pipe.
+func TestARunnerWithNoCommandIsRefused(t *testing.T) {
+	refused := [][]string{
+		{"npx"},
+		{"npx", "--no"},
+		{"npx", "--yes"},
+		{"npx", "-p", "cowsay"},
+		{"npx", "--"},
+		{"npm", "exec"},
+		{"npm", "x", "--yes"},
+		{"pnpm", "dlx"},
+		{"pnpm", "exec"},
+		{"yarn", "exec"},
+		{"bundle", "exec"},
+		{"nice", "npx", "--no"},
+	}
+	for _, args := range refused {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			err := Default().Check(args)
+			if err == nil {
+				t.Fatalf("%v was allowed, and it starts a shell that reads standard input", args)
+			}
+			if !strings.Contains(err.Error(), "standard input") {
+				t.Errorf("the refusal does not name standard input: %v", err)
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"npx", "--version"},
+		{"npx", "-v"},
+		{"npm", "exec", "--help"},
+		{"npm", "install"},
+		{"bundle", "install"},
+	} {
+		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
+			if !allowed(t, args...) {
+				t.Errorf("%v was refused, and it starts no shell", args)
+			}
+		})
+	}
+}
+
+// TestAWordAfterTheFirstOneIsNotShellText covers the false positives that
+// the review of issue 78 found. npm, pnpm, yarn and bundle quote each word
+// after the first one, so a test filter with "|" or "(" is one argument.
+func TestAWordAfterTheFirstOneIsNotShellText(t *testing.T) {
+	for _, args := range [][]string{
+		{"npx", "playwright", "test", "--grep", "@smoke|@fast"},
+		{"pnpm", "exec", "jest", "-t", "adds (1 + 2)"},
+		{"npx", "prisma", "migrate", "dev", "--name", "add user's email"},
+		{"bundle", "exec", "rspec", "-e", "works (edge)"},
+		{"npx", "eslint", "--rule", `{"semi": "error"}`},
+		{"npm", "exec", "--", "vitest", "-t", "a|b"},
+		{"npx", "-y", "cowsay", "a|bash"},
+		{"npx", "-p", "typescript", "tsc", "--init"},
+		{"npx", "-p", ".", "mytool"},
+		{"npx", "--yes", "create-next-app@latest", "app"},
+		{"npx", "@scope/tool@^1.2.0", "run"},
+		{"yarn", "exec", "tsc"},
+		{"pnpm", "dlx", "create-vite", "app"},
+		{"conda", "run", "-n", "base", "pytest", "tests/*"},
+		{"pixi", "run", "test"},
+		{"mise", "exec", "node@20", "--", "node", "app.js"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if !allowed(t, args...) {
+				t.Errorf("%v was refused, and the runner quotes each word after the first", args)
+			}
+		})
+	}
+}
+
+func TestIsAssignment(t *testing.T) {
+	for w, want := range map[string]bool{
+		"X=1": true, "_a=": true, "A1=b=c": true,
+		"=x": false, "1A=x": false, "a-b=x": false, "bash": false, "--flag=x": false,
+	} {
+		if got := isAssignment(w); got != want {
+			t.Errorf("isAssignment(%q) = %v, want %v", w, got, want)
+		}
+	}
 }
