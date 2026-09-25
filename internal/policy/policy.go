@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -128,20 +129,48 @@ func Load(root string) (*Policy, error) {
 // The rules and the hash come from one read. With two reads, the file could
 // change between them, and an approval of one file would pass another.
 func LoadWithHash(root string) (*Policy, string, error) {
+	p, sum, _, err := LoadWithStamp(root)
+	return p, sum, err
+}
+
+// LoadWithStamp is LoadWithHash, and it also returns a stamp for the approval.
+// The stamp holds the hash, and it also names this copy of the file on disk:
+// its modification time, and on Unix its inode. The stamp is empty when the
+// project has no policy file.
+//
+// A hash alone names the bytes and not the file. A human who approved a file
+// and then removed it did not approve a copy that an agent writes back later,
+// and that copy has the same hash. It has a new modification time and a new
+// inode, so it does not have the same stamp.
+//
+// The time and the inode come from the open file, and the bytes come from the
+// same open file, so a swap of the file between the two reads cannot join the
+// stamp of one copy to the bytes of another.
+func LoadWithStamp(root string) (p *Policy, sum, stamp string, err error) {
 	path := filepath.Join(root, ".secretveil", FileName)
-	body, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Default(), "", nil
+		return Default(), "", "", nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
-	sum := sha256.Sum256(body)
-	p, err := decode(path, body)
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
-	return p, hex.EncodeToString(sum[:]), nil
+	body, err := io.ReadAll(f)
+	if err != nil {
+		return nil, "", "", err
+	}
+	hash := sha256.Sum256(body)
+	p, err = decode(path, body)
+	if err != nil {
+		return nil, "", "", err
+	}
+	sum = hex.EncodeToString(hash[:])
+	return p, sum, sum + ":" + fileID(info), nil
 }
 
 func decode(path string, body []byte) (*Policy, error) {
@@ -200,8 +229,10 @@ func normalize(p *Policy) {
 	p.Agent.InlineCode = inline
 }
 
-// ApprovalKey names the setting in the encrypted store that holds the hash of
-// the policy file a human approved.
+// ApprovalKey names the setting in the encrypted store that holds the stamp of
+// the policy file a human approved. See LoadWithStamp. The name says sha256
+// because the first versions stored the hash alone. Such a value matches no
+// stamp, so a file approved that way needs one more approval.
 const ApprovalKey = "policy_sha256"
 
 // Weaker returns one reason for each place where p gives an agent more than

@@ -36,8 +36,10 @@ or a shorter deny list, does not apply to an agent until a human approves it.
 Until then, an agent gets the default rules as well as the rules in the file.
 
 approve needs a human at a terminal. It stores the SHA-256 of the file inside
-the encrypted store. A change to the file cancels the approval, so run approve
-again after each change.`,
+the encrypted store, with the modification time of the file and, on Unix, its
+inode. A change to the file cancels the approval, so run approve again after
+each change. A copy of the file that is removed and written back is a new copy,
+and it needs a new approval too.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := rootFrom(nil)
@@ -48,7 +50,7 @@ again after each change.`,
 			log := audit.New(root)
 			who := detect.Detect()
 
-			p, sum, err := policy.LoadWithHash(root)
+			p, sum, stamp, err := policy.LoadWithStamp(root)
 			if err != nil {
 				return err
 			}
@@ -77,7 +79,7 @@ again after each change.`,
 			if _, err := os.Stat(file.Path()); err != nil {
 				return fmt.Errorf("this project has no store yet. Run \"secretveil init\" first")
 			}
-			if err := file.SetMeta(policy.ApprovalKey, sum); err != nil {
+			if err := file.SetMeta(policy.ApprovalKey, stamp); err != nil {
 				return err
 			}
 			_ = log.Write(audit.Record{
@@ -92,7 +94,7 @@ again after each change.`,
 			for _, r := range reasons {
 				fmt.Fprintf(out, "  %s\n", r)
 			}
-			fmt.Fprintln(out, "A change to the file cancels this approval.")
+			fmt.Fprintln(out, "A change to the file, or a new copy of it, cancels this approval.")
 			return nil
 		},
 	}
@@ -102,36 +104,58 @@ again after each change.`,
 //
 // written is the file as it is. inForce is the set that applies. They are the
 // same unless the file turns off a default rule and no human approved it. Then
-// inForce is the floor, and reasons names what the file turned off.
-func agentPolicy(root string, file *agefile.Store) (written, inForce *policy.Policy, reasons []string, err error) {
-	written, sum, err := policy.LoadWithHash(root)
+// inForce is the floor, and reasons names what the file turned off. stamp names
+// the copy of the file that was read, and it is empty when there is no file.
+func agentPolicy(root string, file *agefile.Store) (written, inForce *policy.Policy, reasons []string, stamp string, err error) {
+	written, _, stamp, err = policy.LoadWithStamp(root)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	reasons = policy.Weaker(written)
-	if len(reasons) == 0 || approved(file, sum) {
-		return written, written, nil, nil
+	if len(reasons) == 0 || approved(file, stamp) {
+		return written, written, nil, stamp, nil
 	}
-	return written, policy.Floor(written), reasons, nil
+	return written, policy.Floor(written), reasons, stamp, nil
 }
 
-// approved reports whether the store holds this hash as the approved policy.
+// approved reports whether the store holds this stamp as the approved policy.
 // A store that does not open gives no approval.
-func approved(file *agefile.Store, sum string) bool {
-	if sum == "" || file == nil {
+//
+// The stamp names one copy of the file, and not only its bytes. See
+// policy.LoadWithStamp.
+func approved(file *agefile.Store, stamp string) bool {
+	if stamp == "" || file == nil {
 		return false
 	}
 	got, err := file.Meta(policy.ApprovalKey)
-	return err == nil && got == sum
+	return err == nil && got == stamp
+}
+
+// forget removes a stored approval that does not name this copy of the file.
+//
+// Such an approval is of no use, because the file it names is gone or has
+// changed. If it stays, a later copy that gets the same stamp gets the
+// approval too. An error is not reported: the approval does not match, so
+// the floor applies either way.
+func forget(file *agefile.Store, stamp string) {
+	if file == nil {
+		return
+	}
+	got, err := file.Meta(policy.ApprovalKey)
+	if err != nil || got == "" || got == stamp {
+		return
+	}
+	_ = file.SetMeta(policy.ApprovalKey, "")
 }
 
 // agentCheck applies the rules to a command that an agent wants to run. It
 // returns the refusal, or nil, and the detail for the audit log.
 func agentCheck(root string, file *agefile.Store, args []string) (*policy.Refusal, string, error) {
-	written, inForce, reasons, err := agentPolicy(root, file)
+	written, inForce, reasons, stamp, err := agentPolicy(root, file)
 	if err != nil {
 		return nil, "", err
 	}
+	forget(file, stamp)
 	var r *policy.Refusal
 	if !errors.As(inForce.Check(args), &r) {
 		return nil, "", nil

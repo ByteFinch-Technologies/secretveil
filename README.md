@@ -354,7 +354,8 @@ Set `SECRETVEIL_CALLER=human` when that is wrong. The marker of an AI tool wins 
 variable, so an agent cannot use it to call itself a human. Edit `.secretveil/policy.toml` to change what an
 agent may run, or set `enforce = false` to turn the command rules off and keep the output filter.
 An agent can write that file too, so a change that turns off a default rule applies to an agent
-only after you run `secretveil policy approve`. A change to the file cancels the approval.
+only after you run `secretveil policy approve`. A change to the file cancels the approval, and
+so does a removal of the file.
 
 ## Related tools
 

@@ -90,6 +90,20 @@ shell. Now a file that turns off a default rule applies to an agent only after a
 which an agent cannot write without the key. Until then, the default rules apply as well as the
 file. An agent that edits an approved file cancels the approval.
 
+The approval also holds the modification time of the file and, on Unix, its inode and its
+change time. A hash alone names the bytes. So a human who approved a file and then removed it
+would still approve the same bytes when an agent wrote them back. A copy that is written back
+has a new time and a new inode, so it needs a new approval. A move or a hard link keeps the
+inode and the modification time, but it changes the change time. A program that runs as the
+user can set the modification time, but it cannot set the change time back. An agent run that
+sees a stored approval that does not name the file removes that approval, so an old approval
+cannot come back later.
+
+The cost: a save from an editor, a `touch`, a `chmod` or a copy of the project cancels the
+approval, and the human runs `secretveil policy approve` again. On a Unix other than macOS and
+Linux, and on Windows, the stamp has no change time, and a move away and back keeps the
+approval. The releases are for macOS and Linux only.
+
 ### 2.3 The output filter has a floor
 
 The filter removes every secret value from the output of the child process, in either

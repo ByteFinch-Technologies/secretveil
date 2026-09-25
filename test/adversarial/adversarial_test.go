@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -698,6 +699,51 @@ func TestAnAgentCannotTurnThePolicyOff(t *testing.T) {
 	}
 }
 
+// TestARemovedPolicyFileTakesItsApprovalWithIt covers issue 75. The approval
+// was the hash of the bytes. A human approved enforce = false and then removed
+// the file. The agent wrote the same bytes back and got a shell, with no new
+// approval.
+func TestARemovedPolicyFileTakesItsApprovalWithIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this case needs a posix shell")
+	}
+	root := project(t)
+	pol := filepath.Join(root, ".secretveil", "policy.toml")
+	body := "[agent]\nenforce = false\n"
+	shell := []string{"run", "-q", "--", "sh", "-c", "echo SHELL_RAN"}
+
+	write(t, pol, body)
+	if r := sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "policy", "approve"); r.code != 0 {
+		t.Fatalf("a human could not approve the file:\n%s", r.all())
+	}
+	if r := sv(t, root, nil, shell...); r.code != 0 || !strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("the approved file did not apply:\n%s", r.all())
+	}
+
+	if err := os.Remove(pol); err != nil {
+		t.Fatal(err)
+	}
+	if r := sv(t, root, nil, shell...); r.code == 0 {
+		t.Fatalf("with no policy file, an agent got a shell:\n%s", r.all())
+	}
+
+	// The same bytes, written back by the agent. The clock of the kernel
+	// can be coarse, so the copy gets a time that is surely new, as it
+	// would when the agent writes it back later.
+	write(t, pol, body)
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(pol, later, later); err != nil {
+		t.Fatal(err)
+	}
+	r := sv(t, root, nil, shell...)
+	if r.code == 0 || strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("a copy of the file that was written back kept the old approval:\n%s", r.all())
+	}
+	if !strings.Contains(r.stderr, "policy approve") {
+		t.Fatalf("the refusal does not say that the file needs an approval:\n%s", r.all())
+	}
+}
+
 func reverse(s string) string {
 	b := []byte(s)
 	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
@@ -760,6 +806,39 @@ func TestAStoreFaultIsNamedWithAllowMissing(t *testing.T) {
 	}
 	if strings.Contains(r.stderr, "could not be read") {
 		t.Errorf("the right key gave a fault warning:\n%s", r.stderr)
+	}
+}
+
+// TestAPolicyFileMovedAwayAndBackNeedsANewApproval covers a finding of the
+// review of issue 75. A move keeps the bytes, the inode and the modification
+// time, so the stamp of the first fix did not see it.
+func TestAPolicyFileMovedAwayAndBackNeedsANewApproval(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this case needs a posix shell")
+	}
+	root := project(t)
+	pol := filepath.Join(root, ".secretveil", "policy.toml")
+	aside := filepath.Join(root, ".git-keep")
+	shell := []string{"run", "-q", "--", "sh", "-c", "echo SHELL_RAN"}
+
+	write(t, pol, "[agent]\nenforce = false\n")
+	if r := sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "policy", "approve"); r.code != 0 {
+		t.Fatalf("a human could not approve the file:\n%s", r.all())
+	}
+	if r := sv(t, root, nil, shell...); r.code != 0 || !strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("the approved file did not apply:\n%s", r.all())
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if err := os.Rename(pol, aside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(aside, pol); err != nil {
+		t.Fatal(err)
+	}
+	r := sv(t, root, nil, shell...)
+	if r.code == 0 || strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("a file that was moved away and back kept its approval:\n%s", r.all())
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // allowed is a short way to ask the default rules about a command.
@@ -594,6 +595,96 @@ func TestLoadWithHash(t *testing.T) {
 	}
 	if _, d, err := LoadWithHash(t.TempDir()); err != nil || d != "" {
 		t.Fatalf("no file must give no hash, got %q err %v", d, err)
+	}
+}
+
+// TestTheStampNamesTheCopyOfTheFile covers issue 75. A copy of a file that is
+// removed and written back has the same bytes and the same hash. It must not
+// have the same stamp, or an old approval passes the new copy.
+func TestTheStampNamesTheCopyOfTheFile(t *testing.T) {
+	body := "[agent]\nenforce = false\n"
+	root := writePolicy(t, body)
+	path := filepath.Join(root, ".secretveil", FileName)
+
+	_, sum, stamp, err := LoadWithStamp(root)
+	if err != nil || !strings.HasPrefix(stamp, sum+":") {
+		t.Fatalf("got hash %q stamp %q err %v", sum, stamp, err)
+	}
+	if _, _, again, _ := LoadWithStamp(root); again != stamp {
+		t.Fatal("the same copy of the file gave two stamps")
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, none, err := LoadWithStamp(root); err != nil || none != "" {
+		t.Fatalf("no file must give no stamp, got %q err %v", none, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The clock of the kernel can be coarse, so give the new copy a time
+	// that is surely not the time of the old one.
+	later := time.Now().Add(time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	_, sum2, stamp2, err := LoadWithStamp(root)
+	if err != nil || sum2 != sum {
+		t.Fatalf("the same bytes gave hash %q, want %q, err %v", sum2, sum, err)
+	}
+	if stamp2 == stamp {
+		t.Fatal("a copy that was written back has the stamp of the removed copy")
+	}
+}
+
+// TestARenameOrALinkChangesTheStamp covers a finding of the review of issue
+// 75. A rename and a hard link keep the inode and the modification time, so
+// "mv policy.toml off" and back gave the old stamp and kept the approval.
+func TestARenameOrALinkChangesTheStamp(t *testing.T) {
+	root := writePolicy(t, "[agent]\nenforce = false\n")
+	path := filepath.Join(root, ".secretveil", FileName)
+	aside := filepath.Join(root, "aside")
+
+	moves := map[string]func() error{
+		"rename away and back": func() error {
+			if err := os.Rename(path, aside); err != nil {
+				return err
+			}
+			return os.Rename(aside, path)
+		},
+		"hard link away and back": func() error {
+			if err := os.Link(path, aside); err != nil {
+				return err
+			}
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			if err := os.Link(aside, path); err != nil {
+				return err
+			}
+			return os.Remove(aside)
+		},
+	}
+	for name, move := range moves {
+		t.Run(name, func(t *testing.T) {
+			_, _, before, err := LoadWithStamp(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Linux sets the change time from a coarse clock, so let it tick.
+			time.Sleep(50 * time.Millisecond)
+			if err := move(); err != nil {
+				t.Fatal(err)
+			}
+			_, _, after, err := LoadWithStamp(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after == before {
+				t.Errorf("the file kept its stamp %q", before)
+			}
+		})
 	}
 }
 
