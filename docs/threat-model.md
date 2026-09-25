@@ -212,6 +212,18 @@ both cases, the URL escape and the JSON string escape. Both base64 alphabets mat
 alphabet is the one a JWT uses, and it is what Python `urlsafe_b64encode` and Node
 `base64url` produce.
 
+Each language writes a different URL escape and a different JSON string for the same value,
+and each one is different bytes. So the filter matches each of these forms:
+
+- The URL escapes of Go, Python `quote` and `quote_plus`, JavaScript `encodeURIComponent` and
+  `encodeURI`, Java `URLEncoder`, and PHP `urlencode` and `rawurlencode`. Each one is matched
+  with its hex digits in upper case and in lower case, and with a space as `%20` and as `+`.
+- The JSON strings of Go, Python `json.dumps`, Gson and Jackson. Each one is matched with and
+  without the escapes of `<`, `>`, `&`, `=` and `'` as `\uXXXX`, with and without each
+  character outside ASCII as `\uXXXX` in either case, and with `/` written as `\/`.
+
+An encoder that is not in this list can still write a form that the filter does not match.
+
 A value that holds a newline, such as a PEM private key, gets two more forms. The first is
 the value as a terminal prints it, because the terminal driver turns each `\n` into `\r\n`.
 The second is each line of at least six characters on its own, because a program can print
