@@ -130,3 +130,46 @@ func TestAOneLineValueGetsNoLineForms(t *testing.T) {
 		t.Errorf("a value on one line got line forms: %q", forms)
 	}
 }
+
+// TestOtherEncodersFormsAreRemoved covers the forms that an encoder other than
+// Go's writes for the same value. A percent escape can be in lower case, and a
+// JSON string can hold "\/" and a raw "<". Go writes neither of these, so a
+// filter that uses only Go's encoders misses them.
+func TestOtherEncodersFormsAreRemoved(t *testing.T) {
+	const value = "k3y/with+plus=eq?q<lt&amp>gt"
+	forms := []struct {
+		name string
+		text string
+	}{
+		{"a lower case query escape", "k3y%2fwith%2bplus%3deq%3fq%3clt%26amp%3egt"},
+		{"a lower case path escape", "k3y%2fwith+plus=eq%3fq%3clt&amp%3egt"},
+		{"a JSON string with an escaped slash", `k3y\/with+plus=eq?q<lt&amp>gt`},
+		{"a JSON string with no HTML escapes", `k3y\/with+plus=eq?q<lt&amp>gt`},
+		{"a JSON string with no HTML escapes and a plain slash", `k3y/with+plus=eq?q<lt&amp>gt`},
+	}
+	res := Build(map[string]string{"api_token": value}, Options{})
+	for _, f := range forms {
+		t.Run(f.name, func(t *testing.T) {
+			got := run(res.Matcher, `{"token":"`+f.text+`"}`, 7)
+			if strings.Contains(got, f.text) {
+				t.Errorf("the %s of the value survived the filter:\n%s", f.name, got)
+			}
+		})
+	}
+}
+
+func TestLowerPercent(t *testing.T) {
+	cases := map[string]string{
+		"":          "",
+		"%2F%3D":    "%2f%3d",
+		"abc%2Fdef": "abc%2fdef",
+		"ABC%":      "ABC%",
+		"%A":        "%A",
+		"x%AFy%0Bz": "x%afy%0bz",
+	}
+	for in, want := range cases {
+		if got := lowerPercent(in); got != want {
+			t.Errorf("lowerPercent(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -204,3 +204,31 @@ func FuzzIdleFlushIsInvariant(f *testing.F) {
 		}
 	})
 }
+
+// FuzzEveryEncodedFormIsRemoved puts each encoded form of a value inside some
+// other text, and then runs the filter. No form may survive. The seeds hold the
+// characters that the URL and JSON escapes change.
+func FuzzEveryEncodedFormIsRemoved(f *testing.F) {
+	f.Add("k3y/with+plus=eq?q", "pre ", " post", 7)
+	f.Add("a/b/c/d/e/f", `{"t":"`, `"}`, 3)
+	f.Add("<tag>&amp;x", "", "", 1)
+	f.Add("sp ace%25", "q=", "&x=1", 5)
+
+	f.Fuzz(func(t *testing.T, value, before, after string, size int) {
+		if len(value) < DefaultMinLen || !clean(value, before, after) {
+			return
+		}
+		res := Build(map[string]string{"k": value}, Options{})
+		for _, form := range Encodings(value) {
+			// Build drops a form below the floor, for the reason a short value
+			// is dropped. See TestEncodingsHoldNoValueBelowTheFloor.
+			if len(form) < DefaultMinLen {
+				continue
+			}
+			out := runWith(res.Matcher, before+form+after, size%64, marked)
+			if strings.Contains(out, form) {
+				t.Fatalf("the form %q of %q survived in %q", form, value, out)
+			}
+		}
+	})
+}

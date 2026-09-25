@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -106,16 +107,64 @@ func Encodings(v string) []string {
 	for _, b := range base64Parts(v) {
 		keep(b)
 	}
-	keep(url.QueryEscape(v))
-	keep(url.PathEscape(v))
-	if j, err := json.Marshal(v); err == nil && len(j) >= 2 {
-		keep(string(j[1 : len(j)-1]))
+	// A percent escape is "%2F" in Go, but "%2f" in some other encoders. The
+	// two forms are different bytes, so the filter needs both.
+	for _, e := range []string{url.QueryEscape(v), url.PathEscape(v)} {
+		keep(e)
+		keep(lowerPercent(e))
+	}
+	// Go escapes "<", ">" and "&" in a JSON string, and most other encoders do
+	// not. PHP and some other encoders write "/" as "\/". Each of these forms
+	// is valid JSON for the same value, so the filter needs each of them.
+	for _, j := range jsonForms(v) {
+		keep(j)
+		keep(strings.ReplaceAll(j, "/", `\/`))
 	}
 	// Hex needs no shift. Each byte becomes two characters on its own, so the
 	// hex of a value is always inside the hex of anything that holds it.
 	h := hex.EncodeToString([]byte(v))
 	keep(h)
 	keep(strings.ToUpper(h))
+	return out
+}
+
+// lowerPercent returns s with the two hex digits of each percent escape in
+// lower case.
+func lowerPercent(s string) string {
+	b := []byte(s)
+	for i := 0; i+2 < len(b); i++ {
+		if b[i] == '%' {
+			b[i+1] = lowerHex(b[i+1])
+			b[i+2] = lowerHex(b[i+2])
+			i += 2
+		}
+	}
+	return string(b)
+}
+
+func lowerHex(c byte) byte {
+	if c >= 'A' && c <= 'F' {
+		return c + ('a' - 'A')
+	}
+	return c
+}
+
+// jsonForms returns the body of the JSON string for v, with no quotes. It
+// returns the form with the HTML escapes and the form without them.
+func jsonForms(v string) []string {
+	var out []string
+	for _, escapeHTML := range []bool{true, false} {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(escapeHTML)
+		if err := enc.Encode(v); err != nil {
+			continue
+		}
+		j := strings.TrimSuffix(buf.String(), "\n")
+		if len(j) >= 2 {
+			out = append(out, j[1:len(j)-1])
+		}
+	}
 	return out
 }
 

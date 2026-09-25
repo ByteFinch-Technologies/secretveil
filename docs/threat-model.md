@@ -210,7 +210,9 @@ value split across two writes is still caught, and it matches the encoded forms 
 value as well as the value itself. The encoded forms are base64 in both alphabets, hex in
 both cases, the URL escape and the JSON string escape. Both base64 alphabets matter: the URL
 alphabet is the one a JWT uses, and it is what Python `urlsafe_b64encode` and Node
-`base64url` produce.
+`base64url` produce. The URL escape is matched with its hex digits in upper case and in lower
+case. The JSON string escape is matched with and without the HTML escapes of `<`, `>` and `&`,
+and with `/` written as `\/`, because encoders other than Go's write these forms.
 
 A value that holds a newline, such as a PEM private key, gets two more forms. The first is
 the value as a terminal prints it, because the terminal driver turns each `\n` into `\r\n`.
