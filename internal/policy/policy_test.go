@@ -941,7 +941,7 @@ func TestAnotherNameForTheSameProgramIsRefused(t *testing.T) {
 // still gives its rule to python3.12, and that a file that names only the
 // default keys is not weaker because python and python3 became one key.
 func TestAVersionedNameKeepsTheRuleOfAFile(t *testing.T) {
-	p, err := Load(writePolicy(t, "[agent.inline_code]\npython3 = [\"-c\", \"-m\"]\n"))
+	p, err := Load(writePolicy(t, "[agent.inline_code]\npython3 = [\"-c\", \"-i\", \"-\", \"-m\"]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

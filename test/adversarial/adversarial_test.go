@@ -120,7 +120,15 @@ func project(t *testing.T) string {
 // sv runs the binary in a project, as an AI agent unless extra says otherwise.
 func sv(t *testing.T, root string, extra []string, args ...string) result {
 	t.Helper()
+	return svIn(t, root, "", extra, args...)
+}
+
+// svIn is sv with text on the standard input of the command, the way an agent
+// pipes a program into an interpreter.
+func svIn(t *testing.T, root, stdin string, extra []string, args ...string) result {
+	t.Helper()
 	cmd := exec.Command(binary, args...)
+	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Dir = root
 	cmd.Env = append(withoutAgentMarkers(os.Environ()),
 		"SECRETVEIL_CALLER=agent",
@@ -252,6 +260,61 @@ func TestCase2bAWrapperDoesNotHideTheProgram(t *testing.T) {
 				if strings.Contains(r.all(), backwards(v)) {
 					t.Errorf("the value of %s reached the output reversed:\n%s", name, r.all())
 				}
+			}
+		})
+	}
+}
+
+// Case 2c. The rules read the words the way the interpreter reads them, from
+// issues 77, 79 and 81. Each command prints a secret reversed, so the output
+// filter cannot catch it and the rules have to refuse it. Some of them hide
+// the code in a cluster of flags, some send it to standard input, and some let
+// xargs or find put it into the command.
+func TestCase2cTheRulesReadWhatTheInterpreterReads(t *testing.T) {
+	root := project(t)
+	py := "import os; print(os.environ['API_KEY'][::-1])"
+	for _, c := range []struct {
+		stdin string
+		args  []string
+	}{
+		{"", []string{"python3", "-Sc", py}},
+		{"", []string{"python3", "-c" + py}},
+		{"", []string{"perl", "-le", "print scalar reverse $ENV{API_KEY}"}},
+		{"", []string{"node", "-pe", "process.env.API_KEY.split('').reverse().join('')"}},
+		{py, []string{"python3"}},
+		{py, []string{"python3", "-"}},
+		{"print scalar reverse $ENV{API_KEY}", []string{"perl"}},
+		{"-c\x00" + py, []string{"xargs", "-0", "python3"}},
+		{"env", []string{"xargs", "-I{}", "{}"}},
+		{"", []string{"find", "/usr/bin", "-name", "env", "-exec", "{}", ";"}},
+	} {
+		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
+			r := svIn(t, root, c.stdin, nil, append([]string{"run", "--"}, c.args...)...)
+			if r.code == 0 {
+				t.Fatalf("the command ran. It must be refused:\n%s", r.all())
+			}
+			if !strings.Contains(r.stderr, "may not run") {
+				t.Errorf("the refusal does not say what was refused:\n%s", r.all())
+			}
+			mustNotLeak(t, r, "case 2c")
+			for name, v := range secrets(t) {
+				if strings.Contains(r.all(), reverse(v)) {
+					t.Errorf("the value of %s reached the output reversed:\n%s", name, r.all())
+				}
+			}
+		})
+	}
+
+	// The same interpreters with a program file still run.
+	write(t, filepath.Join(root, "ok.py"), "import sys\nprint('RAN', sys.argv[1:])\n")
+	for _, args := range [][]string{
+		{"python3", "ok.py", "-c", "config.yaml"},
+		{"python3", "-u", "ok.py"},
+	} {
+		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
+			r := sv(t, root, nil, append([]string{"run", "--"}, args...)...)
+			if r.code != 0 || !strings.Contains(r.stdout, "RAN") {
+				t.Fatalf("an ordinary command was refused:\n%s", r.all())
 			}
 		})
 	}
