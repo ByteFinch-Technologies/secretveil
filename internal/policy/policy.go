@@ -83,8 +83,12 @@ func Default() *Policy {
 			"awk", "gawk", "mawk", "nawk", "jq",
 		},
 		InlineCode: map[string][]string{
-			"node": {"-e", "--eval", "-p", "--print"},
-			"deno": {"eval"},
+			// "-", or no program file, reads the program from standard input,
+			// and -i reads more code after the program. See interpreters for
+			// how the options of each one are read.
+			"node": {"-e", "--eval", "-p", "--print", "-i", "--interactive", "-"},
+			// deno with no subcommand starts a REPL.
+			"deno": {"eval", "repl", "-"},
 			// bun runs code from the command line in five ways. The pairs
 			// -e and --eval, and -p and --print, evaluate an argument.
 			// "bun -" and "bun run -" read the program from standard input.
@@ -95,13 +99,18 @@ func Default() *Policy {
 			// that looked at the position alone would let "bun --silent exec"
 			// through, and an agent must not have that door.
 			"bun":     {"-e", "--eval", "-p", "--print", "-", "exec", "repl"},
-			"python":  {"-c"},
-			"python3": {"-c"},
-			"ruby":    {"-e"},
-			"perl":    {"-e", "-E"},
-			"php":     {"-r"},
-			"lua":     {"-e"},
-			"R":       {"-e"},
+			"python":  {"-c", "-i", "-"},
+			"python3": {"-c", "-i", "-"},
+			"ruby":    {"-e", "-"},
+			"perl":    {"-e", "-E", "-"},
+			// -B, -R and -E run code at the start, on each line and at the
+			// end. -a is the interactive shell of php.
+			"php":     {"-r", "-B", "-R", "-E", "-a", "-"},
+			"lua":     {"-e", "-i", "-"},
+			"R":       {"-e", "-"},
+			"Rscript": {"-e", "-"},
+			// "osascript -e 'do shell script \"env\"'" runs a shell.
+			"osascript": {"-e", "-i", "-"},
 			// An alias or a pager set with -c runs a shell. These are global
 			// options, so the check reads only the words before the
 			// subcommand. See globalOptions.
@@ -380,16 +389,27 @@ func (p *Policy) Check(args []string) error {
 		return err
 	}
 	name := programName(args[0])
-	inner := p.wrapped(name, args[1:])
-	if inner == nil {
-		return nil
+	var inner [][]string
+	if feed, ok := feeds[name]; ok {
+		cmds, err := feed(p, args[1:])
+		if err != nil {
+			return err
+		}
+		inner = cmds
+	} else if cmd := p.wrapped(name, args[1:]); cmd != nil {
+		inner = [][]string{cmd}
 	}
-	err := p.Check(inner)
-	var r *Refusal
-	if errors.As(err, &r) {
-		r.Program += " through " + name
+	for _, cmd := range inner {
+		err := p.Check(cmd)
+		var r *Refusal
+		if errors.As(err, &r) {
+			r.Program += " through " + name
+		}
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
 }
 
 // wrapped returns the command that a wrapper starts, or nil when name is not a
@@ -402,6 +422,19 @@ func (p *Policy) wrapped(name string, rest []string) []string {
 	starts, ok := wrappers[name]
 	if !ok {
 		return nil
+	}
+	// "command -v node" prints where node is and runs nothing. A bare node
+	// reads its program from standard input, so without this test the rules
+	// refuse an ordinary question.
+	if name == "command" {
+		for _, a := range rest {
+			if !strings.HasPrefix(a, "-") || a == "--" {
+				break
+			}
+			if strings.ContainsAny(a, "vV") {
+				return nil
+			}
+		}
 	}
 	if len(starts) > 0 {
 		i := 0
@@ -462,11 +495,16 @@ func (p *Policy) checkOne(args []string) error {
 				Advice:  "Run it yourself in your own terminal.",
 			}
 		}
-		scan := args[1:]
-		if values, ok := globalOptions[name]; ok {
-			scan = leading(scan, values)
+		bad := inlineFlag(name, args[1:], flags)
+		if bad == "-" {
+			return &Refusal{
+				Program: name,
+				Rule: fmt.Sprintf("with no program file, or with the file -, %s reads its program from standard input, which makes %s a shell",
+					name, name),
+				Advice: "Put the code in a file and name the file in the command.",
+			}
 		}
-		if bad := firstMatch(scan, flags); bad != "" {
+		if bad != "" {
 			// A word such as "exec" or "repl" is a subcommand and not a
 			// flag. Calling it a flag makes the developer look for a flag
 			// that is not there.
@@ -608,16 +646,21 @@ deny = [
 # Flags that make a program run code straight from the command line. A flag
 # like this turns an interpreter into a shell.
 [agent.inline_code]
-node = ["-e", "--eval", "-p", "--print"]
-deno = ["eval"]
+# "-" means that the program reads its code from standard input: it gets no
+# program file, or the file "-". The rules read the options of an interpreter
+# up to its program file, so "python3 app.py -c config.yaml" is allowed.
+node = ["-e", "--eval", "-p", "--print", "-i", "--interactive", "-"]
+deno = ["eval", "repl", "-"]
 bun = ["-e", "--eval", "-p", "--print", "-", "exec", "repl"]
-python = ["-c"]
-python3 = ["-c"]
-ruby = ["-e"]
-perl = ["-e", "-E"]
-php = ["-r"]
-lua = ["-e"]
-R = ["-e"]
+python = ["-c", "-i", "-"]
+python3 = ["-c", "-i", "-"]
+ruby = ["-e", "-"]
+perl = ["-e", "-E", "-"]
+php = ["-r", "-B", "-R", "-E", "-a", "-"]
+lua = ["-e", "-i", "-"]
+R = ["-e", "-"]
+Rscript = ["-e", "-"]
+osascript = ["-e", "-i", "-"]
 git = ["-c", "--config-env"]
 npm = ["-c", "--call"]
 npx = ["-c", "--call"]
