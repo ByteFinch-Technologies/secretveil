@@ -545,7 +545,7 @@ func checkPolicy(root string, file *agefile.Store) finding {
 	if _, err := os.Stat(path); err != nil {
 		return finding{levelNote, "this project has no policy file, so the default rules apply", nil}
 	}
-	written, inForce, reasons, err := agentPolicy(root, file)
+	written, inForce, reasons, _, err := agentPolicy(root, file)
 	if err != nil {
 		return finding{levelBad, "the policy file did not load", []string{
 			err.Error(),

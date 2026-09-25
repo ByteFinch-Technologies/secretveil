@@ -638,6 +638,56 @@ func TestTheStampNamesTheCopyOfTheFile(t *testing.T) {
 	}
 }
 
+// TestARenameOrALinkChangesTheStamp covers a finding of the review of issue
+// 75. A rename and a hard link keep the inode and the modification time, so
+// "mv policy.toml off" and back gave the old stamp and kept the approval.
+func TestARenameOrALinkChangesTheStamp(t *testing.T) {
+	root := writePolicy(t, "[agent]\nenforce = false\n")
+	path := filepath.Join(root, ".secretveil", FileName)
+	aside := filepath.Join(root, "aside")
+
+	moves := map[string]func() error{
+		"rename away and back": func() error {
+			if err := os.Rename(path, aside); err != nil {
+				return err
+			}
+			return os.Rename(aside, path)
+		},
+		"hard link away and back": func() error {
+			if err := os.Link(path, aside); err != nil {
+				return err
+			}
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			if err := os.Link(aside, path); err != nil {
+				return err
+			}
+			return os.Remove(aside)
+		},
+	}
+	for name, move := range moves {
+		t.Run(name, func(t *testing.T) {
+			_, _, before, err := LoadWithStamp(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Linux sets the change time from a coarse clock, so let it tick.
+			time.Sleep(50 * time.Millisecond)
+			if err := move(); err != nil {
+				t.Fatal(err)
+			}
+			_, _, after, err := LoadWithStamp(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after == before {
+				t.Errorf("the file kept its stamp %q", before)
+			}
+		})
+	}
+}
+
 func quoted(names []string) string {
 	out := make([]string, len(names))
 	for i, n := range names {

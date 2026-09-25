@@ -809,6 +809,39 @@ func TestAStoreFaultIsNamedWithAllowMissing(t *testing.T) {
 	}
 }
 
+// TestAPolicyFileMovedAwayAndBackNeedsANewApproval covers a finding of the
+// review of issue 75. A move keeps the bytes, the inode and the modification
+// time, so the stamp of the first fix did not see it.
+func TestAPolicyFileMovedAwayAndBackNeedsANewApproval(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this case needs a posix shell")
+	}
+	root := project(t)
+	pol := filepath.Join(root, ".secretveil", "policy.toml")
+	aside := filepath.Join(root, ".git-keep")
+	shell := []string{"run", "-q", "--", "sh", "-c", "echo SHELL_RAN"}
+
+	write(t, pol, "[agent]\nenforce = false\n")
+	if r := sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "policy", "approve"); r.code != 0 {
+		t.Fatalf("a human could not approve the file:\n%s", r.all())
+	}
+	if r := sv(t, root, nil, shell...); r.code != 0 || !strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("the approved file did not apply:\n%s", r.all())
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if err := os.Rename(pol, aside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(aside, pol); err != nil {
+		t.Fatal(err)
+	}
+	r := sv(t, root, nil, shell...)
+	if r.code == 0 || strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("a file that was moved away and back kept its approval:\n%s", r.all())
+	}
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

@@ -263,10 +263,18 @@ Until then, an agent gets the default rules as well as the rules in the file. A 
 adds rules needs no approval.
 
 `approve` stores the SHA-256 of the file inside the encrypted store, with the modification time
-of the file and, on Unix, its inode. It also writes a `policy` record to the audit log. A change
-to the file cancels the approval, so run it again after each change. A file that is removed and
-written back is a new copy, and it needs a new approval too. `doctor` says whether the file
-needs an approval.
+of the file and, on Unix, its inode and its change time. It also writes a `policy` record to the
+audit log. A change to the file cancels the approval, so run it again after each change. The
+approval names one copy of the file on disk, so these also cancel it, even when the bytes stay
+the same:
+
+- a save from an editor, a `touch`, or a `chmod`
+- a move or a hard link of the file, away and back
+- a file that is removed and written back
+- a copy of the project to a new directory
+
+When an agent runs a command and the stored approval does not name the file, secretveil removes
+the approval. `doctor` says whether the file needs an approval.
 
 When the file allows a command and the default rules refuse it, the refusal names the missing
 approval, so you can see why the file did not apply.
