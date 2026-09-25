@@ -90,6 +90,13 @@ shell. Now a file that turns off a default rule applies to an agent only after a
 which an agent cannot write without the key. Until then, the default rules apply as well as the
 file. An agent that edits an approved file cancels the approval.
 
+The approval also holds the modification time of the file and, on Unix, its inode. A hash alone
+names the bytes. So a human who approved a file and then removed it would still approve the
+same bytes when an agent wrote them back. A copy that is written back has a new time and a new
+inode, so it needs a new approval. An agent that runs as the same user can set the time of a
+file, and on some file systems a new file can get the inode of a removed one. So this check
+makes the attack harder, and it is not a proof.
+
 ### 2.3 The output filter has a floor
 
 The filter removes every secret value from the output of the child process, in either

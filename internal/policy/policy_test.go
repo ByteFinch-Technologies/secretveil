@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // allowed is a short way to ask the default rules about a command.
@@ -594,6 +595,46 @@ func TestLoadWithHash(t *testing.T) {
 	}
 	if _, d, err := LoadWithHash(t.TempDir()); err != nil || d != "" {
 		t.Fatalf("no file must give no hash, got %q err %v", d, err)
+	}
+}
+
+// TestTheStampNamesTheCopyOfTheFile covers issue 75. A copy of a file that is
+// removed and written back has the same bytes and the same hash. It must not
+// have the same stamp, or an old approval passes the new copy.
+func TestTheStampNamesTheCopyOfTheFile(t *testing.T) {
+	body := "[agent]\nenforce = false\n"
+	root := writePolicy(t, body)
+	path := filepath.Join(root, ".secretveil", FileName)
+
+	_, sum, stamp, err := LoadWithStamp(root)
+	if err != nil || !strings.HasPrefix(stamp, sum+":") {
+		t.Fatalf("got hash %q stamp %q err %v", sum, stamp, err)
+	}
+	if _, _, again, _ := LoadWithStamp(root); again != stamp {
+		t.Fatal("the same copy of the file gave two stamps")
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, none, err := LoadWithStamp(root); err != nil || none != "" {
+		t.Fatalf("no file must give no stamp, got %q err %v", none, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The clock of the kernel can be coarse, so give the new copy a time
+	// that is surely not the time of the old one.
+	later := time.Now().Add(time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	_, sum2, stamp2, err := LoadWithStamp(root)
+	if err != nil || sum2 != sum {
+		t.Fatalf("the same bytes gave hash %q, want %q, err %v", sum2, sum, err)
+	}
+	if stamp2 == stamp {
+		t.Fatal("a copy that was written back has the stamp of the removed copy")
 	}
 }
 

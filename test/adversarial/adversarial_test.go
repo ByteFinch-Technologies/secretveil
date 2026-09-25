@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -695,6 +696,51 @@ func TestAnAgentCannotTurnThePolicyOff(t *testing.T) {
 	log := read(t, filepath.Join(root, ".secretveil", "audit.log"))
 	if !strings.Contains(log, `"event":"policy"`) || !strings.Contains(log, "no human approved") {
 		t.Fatalf("the audit log does not record the approval and the refusal:\n%s", log)
+	}
+}
+
+// TestARemovedPolicyFileTakesItsApprovalWithIt covers issue 75. The approval
+// was the hash of the bytes. A human approved enforce = false and then removed
+// the file. The agent wrote the same bytes back and got a shell, with no new
+// approval.
+func TestARemovedPolicyFileTakesItsApprovalWithIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this case needs a posix shell")
+	}
+	root := project(t)
+	pol := filepath.Join(root, ".secretveil", "policy.toml")
+	body := "[agent]\nenforce = false\n"
+	shell := []string{"run", "-q", "--", "sh", "-c", "echo SHELL_RAN"}
+
+	write(t, pol, body)
+	if r := sv(t, root, []string{"SECRETVEIL_CALLER=human"}, "policy", "approve"); r.code != 0 {
+		t.Fatalf("a human could not approve the file:\n%s", r.all())
+	}
+	if r := sv(t, root, nil, shell...); r.code != 0 || !strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("the approved file did not apply:\n%s", r.all())
+	}
+
+	if err := os.Remove(pol); err != nil {
+		t.Fatal(err)
+	}
+	if r := sv(t, root, nil, shell...); r.code == 0 {
+		t.Fatalf("with no policy file, an agent got a shell:\n%s", r.all())
+	}
+
+	// The same bytes, written back by the agent. The clock of the kernel
+	// can be coarse, so the copy gets a time that is surely new, as it
+	// would when the agent writes it back later.
+	write(t, pol, body)
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(pol, later, later); err != nil {
+		t.Fatal(err)
+	}
+	r := sv(t, root, nil, shell...)
+	if r.code == 0 || strings.Contains(r.stdout, "SHELL_RAN") {
+		t.Fatalf("a copy of the file that was written back kept the old approval:\n%s", r.all())
+	}
+	if !strings.Contains(r.stderr, "policy approve") {
+		t.Fatalf("the refusal does not say that the file needs an approval:\n%s", r.all())
 	}
 }
 

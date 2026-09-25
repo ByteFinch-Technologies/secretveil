@@ -262,9 +262,11 @@ that turns off a default rule does not apply to an agent until a human approves 
 Until then, an agent gets the default rules as well as the rules in the file. A file that only
 adds rules needs no approval.
 
-`approve` stores the SHA-256 of the file inside the encrypted store and writes a `policy`
-record to the audit log. A change to the file cancels the approval, so run it again after each
-change. `doctor` says whether the file needs an approval.
+`approve` stores the SHA-256 of the file inside the encrypted store, with the modification time
+of the file and, on Unix, its inode. It also writes a `policy` record to the audit log. A change
+to the file cancels the approval, so run it again after each change. A file that is removed and
+written back is a new copy, and it needs a new approval too. `doctor` says whether the file
+needs an approval.
 
 When the file allows a command and the default rules refuse it, the refusal names the missing
 approval, so you can see why the file did not apply.
