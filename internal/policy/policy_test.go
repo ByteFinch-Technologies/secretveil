@@ -876,3 +876,204 @@ func TestIsAssignment(t *testing.T) {
 		}
 	}
 }
+
+func TestProgramNameReducesCaseAndVersion(t *testing.T) {
+	for in, want := range map[string]string{
+		"bash":                          "bash",
+		"BASH":                          "bash",
+		"/BIN/BASH":                     "bash",
+		`C:\Windows\System32\CMD.EXE`:   "cmd",
+		"cmd.Exe":                       "cmd",
+		"python3":                       "python",
+		"python3.12":                    "python",
+		"Python3.12.exe":                "python",
+		"perl5.34":                      "perl",
+		"node20":                        "node",
+		"node-20":                       "node",
+		"lua_5.4":                       "lua",
+		"ksh93":                         "ksh",
+		"R":                             "r",
+		"Rscript":                       "rscript",
+		"sha256sum":                     "sha256sum",
+		"e2fsck":                        "e2fsck",
+		"7z":                            "7z",
+		"2":                             "2",
+		"1.0":                           "1.0",
+		"/usr/local/bin/python3.12-dbg": "python3.12-dbg",
+	} {
+		if got := programName(in); got != want {
+			t.Errorf("programName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestAnotherNameForTheSameProgramIsRefused covers issue 76. The default file
+// system of macOS ignores case, so BASH starts /bin/bash. A version at the end
+// of the name starts the same interpreter as the name without it.
+func TestAnotherNameForTheSameProgramIsRefused(t *testing.T) {
+	for _, args := range [][]string{
+		{"BASH", "-c", "printenv"},
+		{"Bash", "-c", "printenv"},
+		{"/BIN/BASH", "-c", "printenv"},
+		{"PrintEnv"},
+		{"ksh93", "-c", "printenv"},
+		{"python3.12", "-c", "1"},
+		{"python3.11", "-c", "1"},
+		{"PYTHON3", "-c", "1"},
+		{"perl5.34", "-e", "1"},
+		{"ruby3.3", "-e", "1"},
+		{"node20", "-e", "1"},
+		{"node-20", "-e", "1"},
+		{"lua5.4", "-e", "1"},
+		{"php8.2", "-r", "1"},
+		{"SSH", "host"},
+		{"nice", "BASH", "-c", "id"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%v was allowed, and it is another name for a refused program", args)
+			}
+		})
+	}
+}
+
+// TestAVersionedNameKeepsTheRuleOfAFile checks that a file that names python3
+// still gives its rule to python3.12, and that a file that names only the
+// default keys is not weaker because python and python3 became one key.
+func TestAVersionedNameKeepsTheRuleOfAFile(t *testing.T) {
+	p, err := Load(writePolicy(t, "[agent.inline_code]\npython3 = [\"-c\", \"-m\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reasons := Weaker(p); len(reasons) != 0 {
+		t.Fatalf("a file that only adds a flag is weaker: %q", reasons)
+	}
+	for _, args := range [][]string{{"python3.12", "-m", "http.server"}, {"python", "-c", "1"}} {
+		if p.Check(args) == nil {
+			t.Errorf("the rule for python3 did not apply to %q", args)
+		}
+	}
+
+	p, err = Load(writePolicy(t, "[agent]\nallow = [\"python3\", \"NPM\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"python3.12", "app.py"}, {"npm", "test"}} {
+		if err := p.Check(args); err != nil {
+			t.Errorf("the allow list did not allow %q: %v", args, err)
+		}
+	}
+}
+
+func TestTheDefaultHoldsOneFormOfEachName(t *testing.T) {
+	d := Default()
+	for _, name := range d.Agent.Deny {
+		if baseName(name) != name {
+			t.Errorf("the deny list holds %q, and Check reads it as %q", name, baseName(name))
+		}
+	}
+	for prog := range d.Agent.InlineCode {
+		if baseName(prog) != prog {
+			t.Errorf("inline_code holds %q, and Check reads it as %q", prog, baseName(prog))
+		}
+	}
+}
+
+// TestALetterThatFoldsIntoASCIIIsRefused covers a finding of the review of
+// issue 76. The file system of macOS folds the long s into s, the sharp s into
+// ss and the ligature fi into fi, so each of these names starts a real shell.
+func TestALetterThatFoldsIntoASCIIIsRefused(t *testing.T) {
+	for _, args := range [][]string{
+		{"ba\u017fh", "-c", "printenv"},
+		{"/bin/ba\u017fh", "-c", "printenv"},
+		{"BA\u017fH", "-c", "printenv"},
+		{"z\u017fh", "-c", "printenv"},
+		{"pr\u0131ntenv"},
+		{"\u017f\u017fh", "host"},
+		{"nice", "ba\u017fh", "-c", "id"},
+		{"python3", "-c", "1"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%q was allowed, and the file system folds it into a refused name", args)
+			}
+		})
+	}
+	for in, want := range map[string]string{
+		"ba\u017fh":  "bash",
+		"\ufb01sh":   "fish",
+		"da\u00dfh":  "dassh",
+		"\u1e9ebash": "ssbash",
+		"caf\u00e9":  "caf\u00e9",
+		"na\u00efve": "na\u00efve",
+	} {
+		if got := baseName(in); got != want {
+			t.Errorf("baseName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestOnlyAKnownProgramLosesItsVersion covers the other finding of the review.
+// A version is removed only when the name without it is a program that comes
+// with versions, and a file that names one version keeps the others.
+func TestOnlyAKnownProgramLosesItsVersion(t *testing.T) {
+	for in, want := range map[string][]string{
+		"python3.12": {"python3.12", "python3", "python"},
+		"python3.7m": {"python3.7m", "python3", "python"},
+		"perl5.34":   {"perl5.34", "perl5", "perl"},
+		"pypy3":      {"pypy3", "pypy", "python"},
+		"nodejs":     {"nodejs", "node"},
+		"r2":         {"r2"},
+		"base64":     {"base64"},
+		"x86_64":     {"x86_64"},
+		"sha256sum":  {"sha256sum"},
+		"2":          {"2"},
+	} {
+		if got := forms(in); strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("forms(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	allowedAll := [][]string{
+		{"r2", "-e", "bin.cache=true", "file"},
+		{"base64", "-d", "file"},
+	}
+	for _, args := range allowedAll {
+		if !allowed(t, args...) {
+			t.Errorf("%q was refused, and it is not a version of a refused program", args)
+		}
+	}
+	for _, args := range [][]string{
+		{"pypy3", "-c", "1"},
+		{"nodejs", "-e", "1"},
+		{"luajit", "-e", "1"},
+		{"python3.7m", "-c", "1"},
+		{"x86_64", "bash"},
+		{"linux64", "bash"},
+		{"setarch", "x86_64", "bash"},
+	} {
+		if allowed(t, args...) {
+			t.Errorf("%q was allowed, and it runs a refused program", args)
+		}
+	}
+
+	p, err := Load(writePolicy(t, "[agent]\ndeny = [\"python2\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Check([]string{"python2.7", "app.py"}) == nil {
+		t.Error("a file that denies python2 allowed python2.7")
+	}
+	if err := p.Check([]string{"python3", "app.py"}); err != nil {
+		t.Errorf("a file that denies python2 refused python3: %v", err)
+	}
+
+	// A rule for one version must not hide the default rule for the program.
+	p, err = Load(writePolicy(t, "[agent.inline_code]\n\"python3.12\" = [\"-X\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Check([]string{"python3.12", "-c", "1"}) == nil {
+		t.Error("a rule for python3.12 hid the default -c rule")
+	}
+}

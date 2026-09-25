@@ -255,6 +255,23 @@ the body of a key without its first and last line. A PEM boundary line such as
 and their relatives are refused when the caller is an agent, and the refusal is written to
 the audit log. A path in front of the name does not help: `/bin/bash` and
 `C:\Windows\System32\cmd.exe` both resolve to the same program name on every platform.
+The case of the name and a version at its end do not help either. `BASH`, `python3.12`,
+`perl5.34` and `node-20` get the rules of `bash`, `python`, `perl` and `node`.
+
+The rules read a name the way the file system finds the program:
+
+- The case of each letter is ignored. A letter that the file system of macOS or Windows
+  folds into ASCII is folded first, so `baſh` (a long s), `prıntenv` (a dotless i) and
+  `ﬁsh` (the ligature fi) get the rules of `bash`, `printenv` and `fish`.
+- A version is removed only from a program that comes with versions, such as python,
+  perl, node, ruby, php, lua and the shells. `r2` and `base64` keep their names, so the
+  rules for `r` do not refuse `r2 -e`.
+- Some programs have a second name. `pypy3` gets the rules of `python`, `nodejs` gets the
+  rules of `node`, and `luajit` gets the rules of `lua`.
+- A rule matches each form of the name. `python3.12` matches a rule for `python3.12`, for
+  `python3` and for `python`. So an allow list that names `python3` also allows
+  `python3.12`, a deny list that names `python2` denies `python2.7` and not `python3`, and
+  a flag rule for `python3.12` does not remove the default rule for `python`.
 
 ### 3.4 A secret printed on request
 
