@@ -64,7 +64,7 @@ type Agent struct {
 // to turn the whole thing off. The deny list and the inline code rules are
 // short, they are stable, and they catch the attack that matters.
 func Default() *Policy {
-	return &Policy{Agent: Agent{
+	p := &Policy{Agent: Agent{
 		Enforce: true,
 		Allow:   nil,
 		Deny: []string{
@@ -113,6 +113,10 @@ func Default() *Policy {
 			"ssh":  {}, // any use, because it moves data off the machine
 		},
 	}}
+	// The file is compared with these rules key by key, so they get the
+	// same form as a file. python and python3 become one rule here.
+	normalize(p)
+	return p
 }
 
 // Load reads the policy for a project. A project with no policy file gets the
@@ -173,12 +177,8 @@ func decode(path string, body []byte) (*Policy, error) {
 // Their flags are joined. An empty list refuses every use, so an empty list on
 // either key wins.
 func normalize(p *Policy) {
-	for i, name := range p.Agent.Deny {
-		p.Agent.Deny[i] = programName(name)
-	}
-	for i, name := range p.Agent.Allow {
-		p.Agent.Allow[i] = programName(name)
-	}
+	p.Agent.Deny = names(p.Agent.Deny)
+	p.Agent.Allow = names(p.Agent.Allow)
 	inline := make(map[string][]string, len(p.Agent.InlineCode))
 	for prog, flags := range p.Agent.InlineCode {
 		name := programName(prog)
@@ -198,6 +198,22 @@ func normalize(p *Policy) {
 		}
 	}
 	p.Agent.InlineCode = inline
+}
+
+// names returns each name of the list reduced with programName, one time
+// each. cmd and cmd.exe become one entry. A nil list stays nil, because an
+// empty allow list and a missing one mean the same thing.
+func names(list []string) []string {
+	if list == nil {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, name := range list {
+		if name = programName(name); !contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // ApprovalKey names the setting in the encrypted store that holds the hash of
@@ -519,6 +535,12 @@ func leading(args, values []string) []string {
 // A path is enough to defeat a name test, so /bin/bash and bash have to give
 // the same answer. The .exe ending is removed for the same reason.
 //
+// The name is put in lower case, because the default file system of macOS and
+// Windows ignores case, and BASH starts /bin/bash there. A version at the end
+// is removed too, so python3.12, perl5.34, node20, node-20 and ksh93 get the
+// rule of python, perl, node and ksh. A name that is only a version stays as
+// it is.
+//
 // Both the slash and the backslash count as a separator, whatever machine this
 // runs on. filepath is not used here, because filepath knows only the separator
 // of the machine, and on Linux it would read the whole of
@@ -529,7 +551,13 @@ func programName(arg string) string {
 	if i := strings.LastIndexAny(arg, `/\`); i >= 0 {
 		arg = arg[i+1:]
 	}
-	return strings.TrimSuffix(strings.TrimSuffix(arg, ".exe"), ".EXE")
+	arg = strings.TrimSuffix(strings.ToLower(arg), ".exe")
+	name := strings.TrimRight(arg, "0123456789.")
+	name = strings.TrimRight(name, "-_")
+	if name == "" {
+		return arg
+	}
+	return name
 }
 
 func contains(list []string, s string) bool {

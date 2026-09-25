@@ -171,6 +171,29 @@ func TestCase1AnAgentMayNotRunAShell(t *testing.T) {
 	mustNotLeak(t, r, "case 1")
 }
 
+// Case 1b. Another name for the same shell or interpreter (issue 76). The
+// default file system of macOS ignores case, so BASH starts /bin/bash, and
+// python3.12 is python with a version in its name.
+func TestCase1bAnotherNameIsTheSameProgram(t *testing.T) {
+	root := project(t)
+	for _, args := range [][]string{
+		{"BASH", "-c", "echo SHELL_RAN"},
+		{"python3.12", "-c", "print('SHELL_RAN')"},
+		{"node20", "-e", "console.log('SHELL_RAN')"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			r := sv(t, root, nil, append([]string{"run", "--"}, args...)...)
+			if r.code == 0 || strings.Contains(r.all(), "SHELL_RAN") {
+				t.Fatalf("the command ran. It must be refused:\n%s", r.all())
+			}
+			if !strings.Contains(r.stderr, "may not run") {
+				t.Errorf("the refusal does not say what was refused:\n%s", r.all())
+			}
+			mustNotLeak(t, r, "case 1b")
+		})
+	}
+}
+
 // Case 2. The same attack in an interpreter that is not called a shell.
 func TestCase2AnAgentMayNotRunInlineCode(t *testing.T) {
 	root := project(t)

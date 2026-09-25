@@ -210,6 +210,9 @@ the body of a key without its first and last line. A PEM boundary line such as
 and their relatives are refused when the caller is an agent, and the refusal is written to
 the audit log. A path in front of the name does not help: `/bin/bash` and
 `C:\Windows\System32\cmd.exe` both resolve to the same program name on every platform.
+The case of the name and a version at its end do not help either. `BASH`, `python3.12`,
+`perl5.34` and `node-20` get the rules of `bash`, `python`, `perl` and `node`. For the same
+reason, an allow list that names `python3` also allows `python3.12`.
 
 ### 3.4 A secret printed on request
 
