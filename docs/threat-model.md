@@ -73,12 +73,24 @@ that starts a program for a project: `uv run`, `poetry run`, `bundle exec`, `dir
 text or program text from an argument: `awk`, `jq`, `script`, `watch`, `sudo`, `su`,
 `git -c`, `npx -c` and `npm exec -c`.
 
-`tmux`, `screen`, `parallel`, `hyperfine` and `cross-env-shell` are in the deny list. Each one
-runs its command through a shell, and the rules cannot read shell text. A `tmux` or `screen`
-session with no command is also a shell that keeps the environment after `run` stops, and the
-output filter does not read that session. Some runners give their words to a shell as well:
-`npx`, `npm exec`, `pnpm`, `yarn exec`, `bundle exec` and `conda run`. For these, the rules
-refuse a word that holds a shell character such as `;`, `|`, `$` or a quote.
+`tmux`, `screen`, `parallel`, `hyperfine`, `cross-env-shell` and `concurrently` are in the deny
+list. Each one runs its command through a shell, and the rules cannot read shell text. A `tmux`
+or `screen` session with no command is also a shell that keeps the environment after `run`
+stops, and the output filter does not read that session.
+
+Some runners give words to a shell as well. `npx`, `npm exec`, `pnpm exec`, `pnpm dlx`,
+`yarn exec` and `bundle exec` give the first word of the command to a shell, and they quote
+each word after it. So the rules read only the first word, and they refuse it when it holds a
+character that is not a letter, a digit or one of `@._/+:=,^~-`. That refuses a shell
+character, a space, a quote and a glob such as `/bin/ba?h`. They also refuse `eval`, `.`,
+`source` and `trap` as the first word, because these builtins run the quoted words after them
+as shell text. With no command, these runners start a shell that reads standard input, so the
+rules refuse `npx` or `npm exec` alone. `conda run` and `pixi run` give each word to a shell,
+so the rules refuse a shell character in any word.
+
+A runner option that the rules do not know can take the next word as its value. The rules then
+read that word and the next one both as the program name. That refuses more than it must, but
+an option the rules do not know cannot hide the program.
 
 A wrapper can only show a program that the rules know by name. `nice ./mytool` starts a
 program nobody listed, and the rules let it through. A two-step attack also gets past them.

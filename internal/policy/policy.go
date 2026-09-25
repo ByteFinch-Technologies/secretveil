@@ -84,6 +84,7 @@ func Default() *Policy {
 			// command is a shell that keeps the environment after "run"
 			// stops, and the output filter does not read it.
 			"tmux", "screen", "parallel", "hyperfine", "cross-env-shell",
+			"concurrently",
 			// The program text of these is always an argument, and
 			// "jq -n env" prints the whole environment.
 			"awk", "gawk", "mawk", "nawk", "jq",
@@ -116,6 +117,7 @@ func Default() *Policy {
 			"npm":  {"-c", "--call"},
 			"npx":  {"-c", "--call"},
 			"pnpm": {"-c", "--shell-mode"},
+			"mise": {"-c", "--command"},
 			"ssh":  {}, // any use, because it moves data off the machine
 		},
 	}}
@@ -375,24 +377,73 @@ var wrappers = map[string][]string{
 	"bundle": {"exec"},
 }
 
-// shellRunners names a wrapper that can give its words to a shell. npm exec
-// and npx join the words into one script and run it with sh. yarn exec runs
-// the words in its own shell. bundle exec gives a single word to Ruby
-// Kernel.exec, which uses a shell when the word holds a shell character.
+// shellRunners names a wrapper that can give a word to a shell, and tells
+// which words the shell reads as shell text.
 //
-// The rules cannot read shell text. "npx 'true; bash'" starts bash, and its
-// first word is "true;". So for these wrappers, a word with a shell character
-// is refused. A wrapper that is not in this list starts the program with
-// execvp, and a word is then one argument that no shell reads.
-var shellRunners = map[string]bool{
-	"npm": true, "npx": true, "pnpx": true, "pnpm": true, "yarn": true,
-	"bundle": true, "conda": true,
+// npm exec and npx put the first word of the command in a script and run the
+// script with sh. They quote each word after the first one, so only the first
+// word is shell text. With no command, they start the shell itself, and the
+// shell reads its commands from standard input. yarn exec, pnpm exec and dlx,
+// and bundle exec read the first word in the same way or with less shell.
+//
+// conda run and pixi run join all the words into one script, so each word is
+// shell text.
+//
+// A wrapper that is not in this list starts the program with execvp, and a
+// word is then one argument that no shell reads.
+var shellRunners = map[string]shellText{
+	"npm": firstWord, "npx": firstWord, "pnpx": firstWord, "pnpm": firstWord,
+	"yarn": firstWord, "bundle": firstWord,
+	"conda": everyWord, "pixi": everyWord,
 }
 
+// shellText tells which words of a runner a shell reads.
+type shellText int
+
+const (
+	// firstWord means that the shell reads the first word of the command.
+	firstWord shellText = iota + 1
+	// everyWord means that the shell reads each word of the command.
+	everyWord
+)
+
 // shellChars are the characters that make a shell do more than start one
-// program. A glob character is not in the list: "npx eslint 'src/**/*.ts'" is
-// common, and a glob runs no code.
+// program. A glob character is not in the list: "conda run pytest 'tests/*'"
+// is common, and a glob in an argument runs no code.
 const shellChars = ";&|()<>$`'\"\\\n"
+
+// programChars are the only characters that a first word of a firstWord
+// runner can hold. A glob, a space, a quote or a brace in the program name
+// lets the shell choose the program: "npx '/bin/ba?h'" starts bash.
+const programChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._/+:=,^~-"
+
+// codeBuiltins are the shell builtins that run their arguments as shell text.
+// npx quotes the words after the first one, but "npx eval bash" gives the
+// shell "eval 'bash'", and eval runs bash.
+var codeBuiltins = []string{"eval", ".", "source", "trap"}
+
+// runnerFlags are the options of the firstWord runners that take no value.
+// Any other option can take the next word as its value, so the check reads
+// that word and the words after it too.
+var runnerFlags = []string{
+	"-y", "--yes", "--no", "-q", "--quiet", "-s", "--silent", "--workspaces", "-ws",
+	"--include-workspace-root", "--ignore-scripts", "--prefer-offline", "--prefer-online",
+	"--offline", "--no-install", "--ignore-existing", "-r", "--recursive", "--parallel",
+	"--no-bail", "--keep-file-descriptors", "-d", "--verbose",
+	"-h", "--help", "-v", "--version",
+}
+
+// runnerValues are the options of the firstWord runners that always take the
+// next word as their value. The value goes to the package manager and not to
+// a shell, so the check does not read it.
+var runnerValues = []string{
+	"-p", "--package", "--prefix", "--registry", "--cache", "--userconfig", "--loglevel",
+	"-C", "--dir", "--gemfile",
+}
+
+// runnerExit are the options that print something and stop, so a runner with
+// one of them and no command starts no shell.
+var runnerExit = []string{"-h", "--help", "-v", "--version"}
 
 // globalOptions names a program whose inline code flags are global options.
 // They come before the subcommand, and after it the same letters mean
@@ -452,27 +503,19 @@ func (p *Policy) wrapped(name string, rest []string) ([]string, error) {
 		}
 		rest = rest[i+1:]
 	}
+	if err := shellWords(name, shellRunners[name], rest); err != nil {
+		return nil, err
+	}
 	for i, a := range rest {
-		if shellRunners[name] {
-			if at := strings.IndexAny(a, shellChars); at >= 0 {
-				// The refusal names the character and not the word, so
-				// the audit log gets no text that the agent wrote.
-				return nil, &Refusal{
-					Program: name,
-					Rule: fmt.Sprintf("a word after it holds the shell character %q, and %s can give that word to a shell",
-						a[at:at+1], name),
-					Advice: "Give the program and its arguments as separate words, or put the commands in a script file and run the file.",
-				}
-			}
-		}
 		if p.known(programName(a)) {
 			return rest[i:], nil
 		}
-		// A runner in shellRunners reads a string such as "sh -c x" as a
+		// A runner in shellRunners can read a string such as "sh -c x" as a
 		// command. The first word of the string is a program too, so the
-		// string is split and checked as a command. A string with more
-		// shell text than words is refused above. A shell reads "X=1" at
-		// the start as an assignment, so the program is the word after it.
+		// string is split and checked as a command. shellWords already
+		// refused a string with a shell character, and a first word of a
+		// firstWord runner with a space. A shell reads "X=1" at the start
+		// as an assignment, so the program is the word after it.
 		if words := strings.Fields(a); len(words) > 1 {
 			words = skipAssignments(words)
 			if p.known(programName(words[0])) {
@@ -481,6 +524,107 @@ func (p *Policy) wrapped(name string, rest []string) ([]string, error) {
 		}
 	}
 	return nil, nil
+}
+
+// shellWords returns a refusal when a runner can give shell text to a shell.
+// The refusal names the character and not the word, so the audit log gets no
+// text that the agent wrote.
+func shellWords(name string, kind shellText, rest []string) error {
+	refuse := func(rule string) error {
+		return &Refusal{
+			Program: name,
+			Rule:    rule,
+			Advice:  "Give the program and its arguments as separate words, or put the commands in a script file and run the file.",
+		}
+	}
+	switch kind {
+	case everyWord:
+		for _, a := range rest {
+			if at := strings.IndexAny(a, shellChars); at >= 0 {
+				return refuse(fmt.Sprintf("a word after it holds the shell character %q, and %s gives each word to a shell",
+					a[at:at+1], name))
+			}
+		}
+		// The words hold no shell character, so the script is one command,
+		// and its first word names the program.
+		words, _, _ := runnerCommand(rest)
+		for _, w := range words {
+			if f := strings.Fields(w); len(f) > 0 {
+				w = f[0]
+			}
+			if rule := programWord(name, w); rule != "" {
+				return refuse(rule)
+			}
+		}
+	case firstWord:
+		words, found, exits := runnerCommand(rest)
+		if !found && !exits {
+			return &Refusal{
+				Program: name,
+				Rule: fmt.Sprintf("with no command, %s starts a shell, and the shell reads its commands from standard input",
+					name),
+				Advice: "Name the program to run in the command.",
+			}
+		}
+		for _, w := range words {
+			if rule := programWord(name, w); rule != "" {
+				return refuse(rule)
+			}
+		}
+	}
+	return nil
+}
+
+// programWord returns the reason to refuse w as the program name that a runner
+// gives to a shell, or "".
+func programWord(name, w string) string {
+	if contains(codeBuiltins, w) {
+		return fmt.Sprintf("%s gives %q to a shell, and the shell runs the words after it as shell text", name, w)
+	}
+	at := strings.IndexFunc(w, func(r rune) bool { return !strings.ContainsRune(programChars, r) })
+	if at < 0 && w != "" {
+		return ""
+	}
+	c := "an empty word"
+	if w != "" {
+		c = fmt.Sprintf("the character %q", string([]rune(w[at:])[0]))
+	}
+	return fmt.Sprintf("the program name after it holds %s, and %s gives that name to a shell", c, name)
+}
+
+// runnerCommand finds the first word of the command of a firstWord runner.
+//
+// The rules do not know each option of each runner, so an option that is not
+// in runnerFlags can take the next word as its value. The words that can be
+// the command are all returned, and the check reads each one. That refuses
+// more than it must, and it fails closed.
+func runnerCommand(rest []string) (words []string, found, exits bool) {
+	value := false
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "--":
+			if i+1 < len(rest) {
+				return append(words, rest[i+1]), true, exits
+			}
+			return words, false, exits
+		case len(a) > 1 && strings.HasPrefix(a, "-"):
+			exits = exits || contains(runnerExit, a)
+			if contains(runnerValues, a) {
+				i++
+				value = false
+				continue
+			}
+			value = !strings.Contains(a, "=") && !contains(runnerFlags, a)
+		default:
+			words = append(words, a)
+			if !value {
+				return words, true, exits
+			}
+			value = false
+		}
+	}
+	return words, false, exits
 }
 
 // skipAssignments removes the words at the start of a command that a shell
@@ -665,7 +809,7 @@ deny = [
   "ash", "busybox", "pwsh", "powershell", "cmd",
   "env", "printenv", "set", "export", "declare", "printf",
   "script", "watch", "su", "sudo", "doas", "chroot", "unshare", "nsenter",
-  "flock", "tmux", "screen", "parallel", "hyperfine", "cross-env-shell",
+  "flock", "tmux", "screen", "parallel", "hyperfine", "cross-env-shell", "concurrently",
   "awk", "gawk", "mawk", "nawk", "jq",
 ]
 
@@ -690,6 +834,7 @@ git = ["-c", "--config-env"]
 npm = ["-c", "--call"]
 npx = ["-c", "--call"]
 pnpm = ["-c", "--shell-mode"]
+mise = ["-c", "--command"]
 # An empty list means the program is refused whatever its flags are.
 ssh = []
 `

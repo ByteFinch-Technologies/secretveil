@@ -739,7 +739,6 @@ func TestShellTextThroughARunnerIsRefused(t *testing.T) {
 		{"npx", "`echo bash`"},
 		{"npx", `true\nbash`},
 		{"npx", "true\nbash"},
-		{"npx", "-y", "cowsay", "a|bash"},
 		{"npm", "exec", "--", "true; bash"},
 		{"npm", "x", "true && bash"},
 		{"pnpm", "exec", "true || bash"},
@@ -748,6 +747,27 @@ func TestShellTextThroughARunnerIsRefused(t *testing.T) {
 		{"bundle", "exec", "true; bash"},
 		{"conda", "run", "-n", "base", "true; bash"},
 		{"nice", "npx", "true; bash"},
+		// The review of issue 78 found these. A glob or a space in the
+		// first word lets the shell choose the program.
+		{"npx", "--yes", "-p", ".", "--", "eval /bin/s?"},
+		{"npx", "/bin/ba?h"},
+		{"npx", "/bin/b[a]sh"},
+		{"npx", "{bash,x}"},
+		{"npx", ". /dev/stdin"},
+		{"npx", ".", "/dev/stdin"},
+		{"npx", "source", "/dev/stdin"},
+		{"npx", "eval", "bash"},
+		{"npx", "trap", "bash", "EXIT"},
+		{"npm", "exec", "--", "eval bash"},
+		{"npm", "exec", "--", "eval", "bash"},
+		{"npx", "--foo", ".", "/dev/stdin"},
+		{"pixi", "run", "true; bash"},
+		{"bundle", "exec", "/bin/ba?h"},
+		{"conda", "run", "-n", "base", "/bin/ba?h"},
+		{"pixi", "run", "eval", "x"},
+		{"concurrently", "npm:dev", "bash"},
+		{"mise", "exec", "-c", "env"},
+		{"mise", "x", "--command=env"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			if allowed(t, args...) {
@@ -769,6 +789,80 @@ func TestAShellTextRefusalHoldsNoWord(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `";"`) {
 		t.Errorf("the refusal does not name the shell character: %v", err)
+	}
+}
+
+// TestARunnerWithNoCommandIsRefused covers a runner that starts a shell when
+// no command follows it. The shell reads its commands from standard input, and
+// the rules cannot read a pipe.
+func TestARunnerWithNoCommandIsRefused(t *testing.T) {
+	refused := [][]string{
+		{"npx"},
+		{"npx", "--no"},
+		{"npx", "--yes"},
+		{"npx", "-p", "cowsay"},
+		{"npx", "--"},
+		{"npm", "exec"},
+		{"npm", "x", "--yes"},
+		{"pnpm", "dlx"},
+		{"pnpm", "exec"},
+		{"yarn", "exec"},
+		{"bundle", "exec"},
+		{"nice", "npx", "--no"},
+	}
+	for _, args := range refused {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			err := Default().Check(args)
+			if err == nil {
+				t.Fatalf("%v was allowed, and it starts a shell that reads standard input", args)
+			}
+			if !strings.Contains(err.Error(), "standard input") {
+				t.Errorf("the refusal does not name standard input: %v", err)
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"npx", "--version"},
+		{"npx", "-v"},
+		{"npm", "exec", "--help"},
+		{"npm", "install"},
+		{"bundle", "install"},
+	} {
+		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
+			if !allowed(t, args...) {
+				t.Errorf("%v was refused, and it starts no shell", args)
+			}
+		})
+	}
+}
+
+// TestAWordAfterTheFirstOneIsNotShellText covers the false positives that
+// the review of issue 78 found. npm, pnpm, yarn and bundle quote each word
+// after the first one, so a test filter with "|" or "(" is one argument.
+func TestAWordAfterTheFirstOneIsNotShellText(t *testing.T) {
+	for _, args := range [][]string{
+		{"npx", "playwright", "test", "--grep", "@smoke|@fast"},
+		{"pnpm", "exec", "jest", "-t", "adds (1 + 2)"},
+		{"npx", "prisma", "migrate", "dev", "--name", "add user's email"},
+		{"bundle", "exec", "rspec", "-e", "works (edge)"},
+		{"npx", "eslint", "--rule", `{"semi": "error"}`},
+		{"npm", "exec", "--", "vitest", "-t", "a|b"},
+		{"npx", "-y", "cowsay", "a|bash"},
+		{"npx", "-p", "typescript", "tsc", "--init"},
+		{"npx", "-p", ".", "mytool"},
+		{"npx", "--yes", "create-next-app@latest", "app"},
+		{"npx", "@scope/tool@^1.2.0", "run"},
+		{"yarn", "exec", "tsc"},
+		{"pnpm", "dlx", "create-vite", "app"},
+		{"conda", "run", "-n", "base", "pytest", "tests/*"},
+		{"pixi", "run", "test"},
+		{"mise", "exec", "node@20", "--", "node", "app.js"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if !allowed(t, args...) {
+				t.Errorf("%v was refused, and the runner quotes each word after the first", args)
+			}
+		})
 	}
 }
 
