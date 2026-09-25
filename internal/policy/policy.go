@@ -122,7 +122,7 @@ func Default() *Policy {
 		},
 	}}
 	// The file is compared with these rules key by key, so they get the
-	// same form as a file. python and python3 become one rule here.
+	// same form as a file. R becomes r here.
 	normalize(p)
 	return p
 }
@@ -217,7 +217,7 @@ func normalize(p *Policy) {
 	p.Agent.Allow = names(p.Agent.Allow)
 	inline := make(map[string][]string, len(p.Agent.InlineCode))
 	for prog, flags := range p.Agent.InlineCode {
-		name := programName(prog)
+		name := baseName(prog)
 		got, seen := inline[name]
 		switch {
 		case !seen:
@@ -236,8 +236,9 @@ func normalize(p *Policy) {
 	p.Agent.InlineCode = inline
 }
 
-// names returns each name of the list reduced with programName, one time
-// each. cmd and cmd.exe become one entry. A nil list stays nil, because an
+// names returns each name of the list reduced with baseName, one time each.
+// cmd and cmd.exe become one entry. A version stays, so a file that denies
+// python2 does not deny python3. A nil list stays nil, because an
 // empty allow list and a missing one mean the same thing.
 func names(list []string) []string {
 	if list == nil {
@@ -245,7 +246,7 @@ func names(list []string) []string {
 	}
 	out := make([]string, 0, len(list))
 	for _, name := range list {
-		if name = programName(name); !contains(out, name) {
+		if name = baseName(name); !contains(out, name) {
 			out = append(out, name)
 		}
 	}
@@ -271,15 +272,15 @@ func Weaker(p *Policy) []string {
 	if !p.Agent.Enforce {
 		out = append(out, "enforce is false")
 	}
-	// Check compares the name after programName, so cmd.exe and cmd are one
+	// Check compares the name after baseName, so cmd.exe and cmd are one
 	// rule. The comparison here does the same.
 	denied := map[string]bool{}
 	for _, name := range p.Agent.Deny {
-		denied[programName(name)] = true
+		denied[baseName(name)] = true
 	}
 	seen := map[string]bool{}
 	for _, name := range d.Agent.Deny {
-		name = programName(name)
+		name = baseName(name)
 		if !denied[name] && !seen[name] {
 			seen[name] = true
 			out = append(out, fmt.Sprintf("the deny list does not hold %s", name))
@@ -379,7 +380,8 @@ var wrappers = map[string][]string{
 	"setsid": nil, "xargs": nil, "command": nil, "exec": nil, "builtin": nil,
 	"ionice": nil, "taskset": nil, "chrt": nil, "caffeinate": nil,
 	"unbuffer": nil, "strace": nil, "ltrace": nil, "arch": nil,
-	"sandbox-exec": nil, "npx": nil, "bunx": nil, "pnpx": nil,
+	"sandbox-exec": nil, "setarch": nil, "linux32": nil, "linux64": nil,
+	"x86_64": nil, "i386": nil, "i686": nil, "uname26": nil, "npx": nil, "bunx": nil, "pnpx": nil,
 	"cross-env": nil, "dotenv": nil,
 	"find":   {"-exec", "-execdir", "-ok", "-okdir"},
 	"fd":     {"-x", "--exec", "-X", "--exec-batch"},
@@ -523,7 +525,7 @@ func (p *Policy) wrapped(name string, rest []string) ([]string, error) {
 		return nil, err
 	}
 	for i, a := range rest {
-		if p.known(programName(a)) {
+		if p.known(a) {
 			return rest[i:], nil
 		}
 		// A runner in shellRunners can read a string such as "sh -c x" as a
@@ -534,7 +536,7 @@ func (p *Policy) wrapped(name string, rest []string) ([]string, error) {
 		// as an assignment, so the program is the word after it.
 		if words := strings.Fields(a); len(words) > 1 {
 			words = skipAssignments(words)
-			if p.known(programName(words[0])) {
+			if p.known(words[0]) {
 				return append(words, rest[i+1:]...), nil
 			}
 		}
@@ -667,34 +669,69 @@ func isAssignment(w string) bool {
 	return true
 }
 
-// known reports whether a name is a program the rules have something to say
-// about.
-func (p *Policy) known(name string) bool {
-	if contains(p.Agent.Deny, name) {
+// known reports whether a word names a program the rules have something to
+// say about.
+func (p *Policy) known(word string) bool {
+	all := forms(word)
+	if p.denied(all) {
 		return true
 	}
-	if _, ok := p.Agent.InlineCode[name]; ok {
+	if _, ok := p.inline(all); ok {
 		return true
 	}
-	_, ok := wrappers[name]
+	_, ok := wrappers[all[len(all)-1]]
 	return ok
+}
+
+// denied reports whether one of the forms of a name is in the deny list.
+func (p *Policy) denied(all []string) bool {
+	for _, f := range all {
+		if contains(p.Agent.Deny, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// inline returns the inline code flags of a program, joined over each of its
+// forms. A file can give python3.12 a rule of its own, and Weaker reads only
+// the keys of the defaults. So a rule for one form must not hide the rule for
+// another, and an empty list on any form refuses every use.
+func (p *Policy) inline(all []string) ([]string, bool) {
+	var flags []string
+	found := false
+	for _, f := range all {
+		got, ok := p.Agent.InlineCode[f]
+		if !ok {
+			continue
+		}
+		if len(got) == 0 {
+			return []string{}, true
+		}
+		found = true
+		for _, flag := range got {
+			if !contains(flags, flag) {
+				flags = append(flags, flag)
+			}
+		}
+	}
+	return flags, found
 }
 
 // checkOne applies the rules to the first word of a command.
 func (p *Policy) checkOne(args []string) error {
-	name := programName(args[0])
+	all := forms(args[0])
+	name := all[len(all)-1]
 
-	for _, d := range p.Agent.Deny {
-		if name == d {
-			return &Refusal{
-				Program: name,
-				Rule:    "it is in the deny list, because it can print the whole environment",
-				Advice:  "Run it yourself in your own terminal, or ask secretveil to run the real command instead of a shell around it.",
-			}
+	if p.denied(all) {
+		return &Refusal{
+			Program: all[0],
+			Rule:    "it is in the deny list, because it can print the whole environment",
+			Advice:  "Run it yourself in your own terminal, or ask secretveil to run the real command instead of a shell around it.",
 		}
 	}
 
-	if flags, ok := p.Agent.InlineCode[name]; ok {
+	if flags, ok := p.inline(all); ok {
 		if len(flags) == 0 {
 			return &Refusal{
 				Program: name,
@@ -723,7 +760,7 @@ func (p *Policy) checkOne(args []string) error {
 		}
 	}
 
-	if len(p.Agent.Allow) > 0 && !contains(p.Agent.Allow, name) {
+	if len(p.Agent.Allow) > 0 && !p.allowed(all) {
 		return &Refusal{
 			Program: name,
 			Rule:    "it is not in the allow list of this project",
@@ -770,16 +807,17 @@ func leading(args, values []string) []string {
 	return args
 }
 
-// programName reduces a path to the name of the program.
+// baseName reduces a path to the name of the program, in the form that the
+// file system reads.
 //
 // A path is enough to defeat a name test, so /bin/bash and bash have to give
 // the same answer. The .exe ending is removed for the same reason.
 //
 // The name is put in lower case, because the default file system of macOS and
-// Windows ignores case, and BASH starts /bin/bash there. A version at the end
-// is removed too, so python3.12, perl5.34, node20, node-20 and ksh93 get the
-// rule of python, perl, node and ksh. A name that is only a version stays as
-// it is.
+// Windows ignores case, and BASH starts /bin/bash there. Those file systems
+// also fold some letters that are not ASCII into ASCII letters. On macOS,
+// "baſh" with a long s starts /bin/bash, and so do "baßh" and a name with the
+// ligature ﬁ in place of "fi". folds holds each letter that folds into ASCII.
 //
 // Both the slash and the backslash count as a separator, whatever machine this
 // runs on. filepath is not used here, because filepath knows only the separator
@@ -787,17 +825,91 @@ func leading(args, values []string) []string {
 // C:\Windows\System32\cmd.exe as one name and let the command through. The
 // policy file is checked into the project, so the same command has to give the
 // same answer on every machine in the team.
-func programName(arg string) string {
+func baseName(arg string) string {
 	if i := strings.LastIndexAny(arg, `/\`); i >= 0 {
 		arg = arg[i+1:]
 	}
-	arg = strings.TrimSuffix(strings.ToLower(arg), ".exe")
-	name := strings.TrimRight(arg, "0123456789.")
-	name = strings.TrimRight(name, "-_")
-	if name == "" {
-		return arg
+	arg = folds.Replace(strings.ToLower(arg))
+	return strings.TrimSuffix(arg, ".exe")
+}
+
+// folds maps each letter that the case folding of Unicode turns into ASCII
+// letters, after strings.ToLower. The list comes from CaseFolding.txt: the long
+// s, the sharp s, the Latin ligatures, and the dotless i, which Windows
+// compares as I.
+var folds = strings.NewReplacer(
+	"\u017f", "s", "\u00df", "ss", "\u1e9e", "ss", "\u0131", "i",
+	"\ufb00", "ff", "\ufb01", "fi", "\ufb02", "fl", "\ufb03", "ffi", "\ufb04", "ffl",
+	"\ufb05", "st", "\ufb06", "st",
+)
+
+// versioned names the programs that are installed with a version at the end
+// of the name, such as python3.12, perl5.34, node20 and ksh93. Only these lose
+// a version, so r2 and base64 stay as they are.
+var versioned = []string{
+	"python", "pypy", "perl", "node", "nodejs", "ruby", "php", "lua", "luajit",
+	"bash", "zsh", "ksh", "mksh", "dash", "fish", "csh", "tcsh", "pwsh", "deno", "bun",
+}
+
+// aliases names another build of a program that reads the same flags. pypy3
+// -c runs code as python3 -c does.
+var aliases = map[string]string{"pypy": "python", "nodejs": "node", "luajit": "lua"}
+
+// forms returns the names that a rule for this program can use, from the most
+// exact to the most general. python3.12 gives python3.12, python3 and python.
+// A rule for any of them applies, so a file that denies python2 denies
+// python2.7 too, and not python3.
+func forms(arg string) []string {
+	name := baseName(arg)
+	out := []string{name}
+	var steps []string
+	for s, ok := trimVersion(name); ok; s, ok = trimVersion(s) {
+		steps = append(steps, s)
 	}
-	return name
+	if len(steps) > 0 && contains(versioned, steps[len(steps)-1]) {
+		out = append(out, steps...)
+	}
+	if a, ok := aliases[out[len(out)-1]]; ok {
+		out = append(out, a)
+	}
+	return out
+}
+
+// trimVersion removes one number from the end of a name, with the separator
+// before it and one letter after it, such as the m of python3.7m.
+func trimVersion(s string) (string, bool) {
+	i := len(s)
+	if i > 1 && s[i-1] >= 'a' && s[i-1] <= 'z' && s[i-2] >= '0' && s[i-2] <= '9' {
+		i--
+	}
+	j := i
+	for j > 0 && s[j-1] >= '0' && s[j-1] <= '9' {
+		j--
+	}
+	if j == i || j == 0 {
+		return s, false
+	}
+	if strings.IndexByte("-_.", s[j-1]) >= 0 {
+		j--
+	}
+	return s[:j], j > 0
+}
+
+// programName returns the most general form of a name, such as python for
+// python3.12 and node for nodejs. The tables in this package use that form.
+func programName(arg string) string {
+	all := forms(arg)
+	return all[len(all)-1]
+}
+
+// allowed reports whether one of the forms of a name is in the allow list.
+func (p *Policy) allowed(all []string) bool {
+	for _, f := range all {
+		if contains(p.Agent.Allow, f) {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(list []string, s string) bool {

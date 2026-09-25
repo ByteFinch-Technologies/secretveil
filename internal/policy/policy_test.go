@@ -968,13 +968,112 @@ func TestAVersionedNameKeepsTheRuleOfAFile(t *testing.T) {
 func TestTheDefaultHoldsOneFormOfEachName(t *testing.T) {
 	d := Default()
 	for _, name := range d.Agent.Deny {
-		if programName(name) != name {
-			t.Errorf("the deny list holds %q, and Check reads it as %q", name, programName(name))
+		if baseName(name) != name {
+			t.Errorf("the deny list holds %q, and Check reads it as %q", name, baseName(name))
 		}
 	}
 	for prog := range d.Agent.InlineCode {
-		if programName(prog) != prog {
-			t.Errorf("inline_code holds %q, and Check reads it as %q", prog, programName(prog))
+		if baseName(prog) != prog {
+			t.Errorf("inline_code holds %q, and Check reads it as %q", prog, baseName(prog))
 		}
+	}
+}
+
+// TestALetterThatFoldsIntoASCIIIsRefused covers a finding of the review of
+// issue 76. The file system of macOS folds the long s into s, the sharp s into
+// ss and the ligature fi into fi, so each of these names starts a real shell.
+func TestALetterThatFoldsIntoASCIIIsRefused(t *testing.T) {
+	for _, args := range [][]string{
+		{"ba\u017fh", "-c", "printenv"},
+		{"/bin/ba\u017fh", "-c", "printenv"},
+		{"BA\u017fH", "-c", "printenv"},
+		{"z\u017fh", "-c", "printenv"},
+		{"pr\u0131ntenv"},
+		{"\u017f\u017fh", "host"},
+		{"nice", "ba\u017fh", "-c", "id"},
+		{"python3", "-c", "1"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if allowed(t, args...) {
+				t.Errorf("%q was allowed, and the file system folds it into a refused name", args)
+			}
+		})
+	}
+	for in, want := range map[string]string{
+		"ba\u017fh":  "bash",
+		"\ufb01sh":   "fish",
+		"da\u00dfh":  "dassh",
+		"\u1e9ebash": "ssbash",
+		"caf\u00e9":  "caf\u00e9",
+		"na\u00efve": "na\u00efve",
+	} {
+		if got := baseName(in); got != want {
+			t.Errorf("baseName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestOnlyAKnownProgramLosesItsVersion covers the other finding of the review.
+// A version is removed only when the name without it is a program that comes
+// with versions, and a file that names one version keeps the others.
+func TestOnlyAKnownProgramLosesItsVersion(t *testing.T) {
+	for in, want := range map[string][]string{
+		"python3.12": {"python3.12", "python3", "python"},
+		"python3.7m": {"python3.7m", "python3", "python"},
+		"perl5.34":   {"perl5.34", "perl5", "perl"},
+		"pypy3":      {"pypy3", "pypy", "python"},
+		"nodejs":     {"nodejs", "node"},
+		"r2":         {"r2"},
+		"base64":     {"base64"},
+		"x86_64":     {"x86_64"},
+		"sha256sum":  {"sha256sum"},
+		"2":          {"2"},
+	} {
+		if got := forms(in); strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("forms(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	allowedAll := [][]string{
+		{"r2", "-e", "bin.cache=true", "file"},
+		{"base64", "-d", "file"},
+	}
+	for _, args := range allowedAll {
+		if !allowed(t, args...) {
+			t.Errorf("%q was refused, and it is not a version of a refused program", args)
+		}
+	}
+	for _, args := range [][]string{
+		{"pypy3", "-c", "1"},
+		{"nodejs", "-e", "1"},
+		{"luajit", "-e", "1"},
+		{"python3.7m", "-c", "1"},
+		{"x86_64", "bash"},
+		{"linux64", "bash"},
+		{"setarch", "x86_64", "bash"},
+	} {
+		if allowed(t, args...) {
+			t.Errorf("%q was allowed, and it runs a refused program", args)
+		}
+	}
+
+	p, err := Load(writePolicy(t, "[agent]\ndeny = [\"python2\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Check([]string{"python2.7", "app.py"}) == nil {
+		t.Error("a file that denies python2 allowed python2.7")
+	}
+	if err := p.Check([]string{"python3", "app.py"}); err != nil {
+		t.Errorf("a file that denies python2 refused python3: %v", err)
+	}
+
+	// A rule for one version must not hide the default rule for the program.
+	p, err = Load(writePolicy(t, "[agent.inline_code]\n\"python3.12\" = [\"-X\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Check([]string{"python3.12", "-c", "1"}) == nil {
+		t.Error("a rule for python3.12 hid the default -c rule")
 	}
 }
