@@ -211,6 +211,10 @@ func TestCase2bAWrapperDoesNotHideTheProgram(t *testing.T) {
 		{"git", "-c", "alias.x=!echo $API_KEY | rev", "x"},
 		{"awk", `BEGIN{s=ENVIRON["API_KEY"]; for(i=length(s);i>0;i--) printf substr(s,i,1)}`},
 		{"jq", "-n", "env"},
+		// A detached session with no command is a shell that keeps the
+		// environment after run stops (issue 78).
+		{"tmux", "new-session", "-d"},
+		{"npx", "true; sh -c 'echo $API_KEY | rev'"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			r := sv(t, root, nil, append([]string{"run", "--"}, args...)...)
