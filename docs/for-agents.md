@@ -119,6 +119,8 @@ that secretveil cannot rewrite, and the reminder to rotate.
 | `get --reveal` is refused | It prints a plaintext value. It needs `--reveal` and a human caller. | Use `secretveil run` instead, which gives the value to the program and keeps it out of the output. |
 | `run -- bash -c ...` is refused | A shell runs anything, so allowing one allows everything. | Run the program directly: `secretveil run -- npm run build`. |
 | `run -- node -e ...` is refused | An inline code flag turns an interpreter into a shell. | Put the code in a file and run the file. |
+| `run -- python3` with a pipe is refused | An interpreter with no program file reads its program from standard input, and the rules cannot read it. | Put the code in a file and name the file in the command. |
+| `run -- xargs python3` is refused | The input of `xargs` can give the interpreter a flag or a program. | Name the program file in the command: `xargs python3 lint.py`. |
 | `init` stops and writes nothing | No terminal is attached and `-y` was not given. | Run `secretveil init -y`, after the person agrees. |
 
 Each refusal goes into the local audit log. The log never holds a value.

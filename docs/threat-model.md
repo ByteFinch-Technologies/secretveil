@@ -92,6 +92,23 @@ A runner option that the rules do not know can take the next word as its value. 
 read that word and the next one both as the program name. That refuses more than it must, but
 an option the rules do not know cannot hide the program.
 
+The rules read the options of an interpreter the way the interpreter reads them. `perl -lne`
+is `-l`, `-n` and `-e`, and `python3 -cCODE` is `-c` with its code, so both are refused. The
+options stop at the program file, so `python3 app.py -c config.yaml` gives `-c` to `app.py`
+and is allowed. An interpreter with no program file, or with the file `-`, reads its program
+from standard input. The rules cannot read a pipe, so `python3`, `node`, `perl -` and
+`python3 < x.py` are refused for an agent. So are `python3 -i` and `node -i`, which read more
+code after the program, and `osascript -e`, `Rscript -e` and a bare `deno`. The table of the
+options that take a value is in the code. An option that the table does not name ends the
+options too early, and the rules then read its value as the program file.
+
+`xargs`, `find -exec` and `fd -x` put words from their input into the command they start.
+The rules refuse the command when the input can name the program, as in `xargs -I{} {}` or
+`find /usr/bin -name env -exec {} ;`. They also refuse it when the program is a wrapper or an
+interpreter and the input can add its flags or its program, as in `xargs nice` or
+`xargs -0 python3`. `xargs python3 lint.py`, `xargs git add` and `find . -exec python3 {} ;`
+stay allowed, because the program file or the subcommand is in the command.
+
 A wrapper can only show a program that the rules know by name. `nice ./mytool` starts a
 program nobody listed, and the rules let it through. A two-step attack also gets past them.
 The agent writes `git config alias.x '!printenv'` into the repository, and then runs
